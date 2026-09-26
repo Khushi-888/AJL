@@ -17,11 +17,12 @@ async def lifespan(app: FastAPI):
         from backend.database import AsyncSessionLocal
         from backend import models
         from sqlalchemy import select, func
+        user_cnt = 0
         async with AsyncSessionLocal() as db_session:
             user_cnt = await db_session.scalar(select(func.count(models.User.id)))
-            if user_cnt == 0:
-                from backend.seed import seed_data
-                await seed_data()
+        if user_cnt == 0:
+            from backend.seed import seed_data
+            await seed_data()
     except Exception as e:
         print(f"Startup check/seed info: {e}")
 
