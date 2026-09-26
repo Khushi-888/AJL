@@ -1,0 +1,18 @@
+[Unit]
+Description=StockSense FastAPI Application
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+WorkingDirectory=/var/www/StockSense
+Environment="PATH=/var/www/StockSense/venv/bin"
+Environment="DATABASE_URL=postgresql+asyncpg://postgres:yourpassword@localhost:5432/stocksense"
+Environment="SECRET_KEY=your-production-secret-key"
+ExecStart=/var/www/StockSense/venv/bin/gunicorn backend.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 127.0.0.1:8000
+
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
