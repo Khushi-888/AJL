@@ -11,6 +11,12 @@ async def seed_data(drop=False):
     print("Database tables ensured successfully in PostgreSQL!")
 
     async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        existing = await db.scalar(select(models.User.id).where(models.User.email == "manager@stocksense.com"))
+        if existing:
+            print("StockSense is already seeded.")
+            return
+
         # 2. Users (Inventory Manager and Warehouse Staff)
         manager = models.User(
             name="Khushi Saharan (Manager)",
