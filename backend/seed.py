@@ -1,19 +1,18 @@
 import asyncio
-from backend.database import engine, AsyncSessionLocal, Base
-from backend import models, auth
+from backend import database, models, auth
 
 async def seed_data(drop=False):
-    # 1. Ensure all tables exist in PostgreSQL
-    async with engine.begin() as conn:
+    # 1. Ensure all tables exist
+    async with database.engine.begin() as conn:
         if drop:
-            await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-    print("Database tables ensured successfully in PostgreSQL!")
+            await conn.run_sync(database.Base.metadata.drop_all)
+        await conn.run_sync(database.Base.metadata.create_all)
+    print("Database tables ensured successfully!")
 
-    async with AsyncSessionLocal() as db:
+    async with database.AsyncSessionLocal() as db:
         from sqlalchemy import select
         existing = await db.scalar(select(models.User.id).where(models.User.email == "manager@stocksense.com"))
-        if existing:
+        if existing and not drop:
             print("StockSense is already seeded.")
             return
 

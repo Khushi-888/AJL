@@ -4,6 +4,118 @@
  * Aligned with StockSense.pdf Problem Statement
  */
 
+// Dynamic Backend Resolver & Resilient Networking
+let API_BASE = "";
+
+function initApiBase() {
+  const savedBase = localStorage.getItem("stocksense_api_base");
+  if (savedBase) {
+    API_BASE = savedBase;
+    updateBackendUI();
+    return;
+  }
+  // If running via file:/// or static server port (e.g. Live Server 5500, Vite 5173, etc.)
+  if (window.location.protocol === "file:" || (window.location.port && window.location.port !== "8000" && window.location.port !== "80" && window.location.port !== "443")) {
+    API_BASE = "https://stocksense-web-1z1f.onrender.com";
+  } else {
+    API_BASE = ""; // Relative to origin
+  }
+  updateBackendUI();
+}
+
+function toggleBackendTarget() {
+  if (API_BASE.includes("onrender.com") || (!API_BASE && window.location.host.includes("onrender.com"))) {
+    API_BASE = "http://localhost:8000";
+    localStorage.setItem("stocksense_api_base", API_BASE);
+    showToast("Target switched to Localhost Backend (http://localhost:8000)", "info");
+  } else {
+    API_BASE = "https://stocksense-web-1z1f.onrender.com";
+    localStorage.setItem("stocksense_api_base", API_BASE);
+    showToast("Target switched to Render Cloud Backend", "info");
+  }
+  updateBackendUI();
+  setupWebSocket();
+  loadInitialData();
+  refreshCurrentViewData();
+}
+
+function updateBackendUI() {
+  const dot = document.getElementById("backendDot");
+  const label = document.getElementById("backendLabel");
+  const badge = document.getElementById("backendTargetBadge");
+  if (!label || !badge) return;
+
+  const isCloud = API_BASE.includes("onrender.com") || (!API_BASE && window.location.host.includes("onrender.com"));
+  if (isCloud) {
+    label.textContent = "Cloud API";
+    badge.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition shadow-xs cursor-pointer";
+    if (dot) dot.className = "w-2 h-2 rounded-full bg-indigo-500 animate-pulse";
+  } else {
+    label.textContent = "Local API";
+    badge.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition shadow-xs cursor-pointer";
+    if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+  }
+}
+
+// Resilient network fetcher with auto-failover to cloud & token injection
+async function apiFetch(endpoint, options = {}) {
+  let url = endpoint;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    const cleanEp = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    url = `${API_BASE}${cleanEp}`;
+  }
+
+  options.headers = options.headers || {};
+  const token = localStorage.getItem("stocksense_token");
+  if (token && !options.headers["Authorization"]) {
+    options.headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const res = await _nativeFetch(url, options);
+    return res;
+  } catch (err) {
+    // If local fetch failed, auto fallback to Render cloud
+    if ((API_BASE === "" || API_BASE.includes("localhost") || API_BASE.includes("127.0.0.1")) && !url.includes("onrender.com")) {
+      console.warn("Local backend unreachable. Automatically failing over to Render Cloud...", err);
+      const cleanEp = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+      const cloudUrl = `https://stocksense-web-1z1f.onrender.com${cleanEp}`;
+      try {
+        const fallbackRes = await _nativeFetch(cloudUrl, options);
+        API_BASE = "https://stocksense-web-1z1f.onrender.com";
+        localStorage.setItem("stocksense_api_base", API_BASE);
+        updateBackendUI();
+        showToast("Connected to StockSense Cloud (Render)", "info");
+        return fallbackRes;
+      } catch (cloudErr) {
+        console.warn("Cloud failover failed:", cloudErr);
+      }
+    }
+
+    if (url.includes("onrender.com")) {
+      throw new Error("Render Cloud server is waking up from free-tier sleep. Please wait a few seconds and try again.");
+    }
+    throw new Error(err.message === "Failed to fetch" ? "Network connection error. Server may be offline or unreachable." : err.message);
+  }
+}
+
+// Intercept standard fetch calls for API paths
+const _nativeFetch = window.fetch;
+window.fetch = function(input, init) {
+  if (typeof input === "string" && (
+    input.startsWith("/auth") ||
+    input.startsWith("/products") ||
+    input.startsWith("/operations") ||
+    input.startsWith("/warehouses") ||
+    input.startsWith("/otp") ||
+    input.startsWith("/ws") ||
+    input.startsWith("/health")
+  )) {
+    return apiFetch(input, init);
+  }
+  return _nativeFetch.apply(this, arguments);
+};
+
 // Global State
 let currentUser = {
   id: 1,
@@ -26,6 +138,7 @@ let ws = null;
 
 // Initialize Application
 document.addEventListener("DOMContentLoaded", async () => {
+  initApiBase();
   lucide.createIcons();
   checkAuthSession();
   setupWebSocket();
@@ -665,17 +778,33 @@ async function handleProfileChangePasswordSubmit() {
 
 // WebSocket real-time updates
 function setupWebSocket() {
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
+  let wsUrl;
+  if (API_BASE && API_BASE.startsWith("http")) {
+    const urlObj = new URL(API_BASE);
+    const wsProto = urlObj.protocol === "https:" ? "wss:" : "ws:";
+    wsUrl = `${wsProto}//${urlObj.host}/ws/dashboard`;
+  } else if (window.location.protocol === "file:") {
+    wsUrl = "wss://stocksense-web-1z1f.onrender.com/ws/dashboard";
+  } else {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = window.location.host || "localhost:8000";
+    wsUrl = `${protocol}//${host}/ws/dashboard`;
+  }
 
   try {
+    if (ws) {
+      try { ws.close(); } catch (_) {}
+    }
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      document.getElementById("wsStatusBadge").innerHTML = `
-        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-        <span class="hidden sm:inline">PostgreSQL 18 Sync</span>
-      `;
+      const badge = document.getElementById("wsStatusBadge");
+      if (badge) {
+        badge.innerHTML = `
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="hidden sm:inline">PostgreSQL 18 Sync</span>
+        `;
+      }
     };
 
     ws.onmessage = (event) => {
@@ -689,14 +818,20 @@ function setupWebSocket() {
     };
 
     ws.onclose = () => {
-      document.getElementById("wsStatusBadge").innerHTML = `
-        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-        <span class="hidden sm:inline">Polling</span>
-      `;
-      setTimeout(setupWebSocket, 3000);
+      const badge = document.getElementById("wsStatusBadge");
+      if (badge) {
+        badge.innerHTML = `
+          <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+          <span class="hidden sm:inline">Polling</span>
+        `;
+      }
+      setTimeout(setupWebSocket, 4000);
+    };
+    ws.onerror = (e) => {
+      // Quiet WebSocket errors to avoid notification spam
     };
   } catch (e) {
-    console.error("WS error:", e);
+    console.warn("WS error:", e);
   }
 }
 
@@ -718,46 +853,60 @@ async function fetchWarehousesAndLocations() {
       fetch("/warehouses/"),
       fetch("/warehouses/locations")
     ]);
-    allWarehouses = await whRes.json();
-    allLocations = await locRes.json();
+    if (whRes.ok) {
+      const data = await whRes.json();
+      allWarehouses = Array.isArray(data) ? data : [];
+    }
+    if (locRes.ok) {
+      const data = await locRes.json();
+      allLocations = Array.isArray(data) ? data : [];
+    }
     renderWarehousesSettings();
   } catch (e) {
-    console.error(e);
+    console.error("Warehouses fetch error:", e);
   }
 }
 
 async function fetchProducts() {
   try {
     const res = await fetch("/products/");
-    allProducts = await res.json();
-    document.getElementById("productCountBadge").textContent = allProducts.length;
-    renderProductCatalog(allProducts);
-    renderLowStockAlerts(allProducts);
+    if (res.ok) {
+      const data = await res.json();
+      allProducts = Array.isArray(data) ? data : [];
+      const badge = document.getElementById("productCountBadge");
+      if (badge) badge.textContent = allProducts.length;
+      renderProductCatalog(allProducts);
+      renderLowStockAlerts(allProducts);
+    }
   } catch (e) {
-    console.error(e);
+    console.error("Products fetch error:", e);
   }
 }
 
 async function fetchCategories() {
   try {
     const res = await fetch("/products/categories");
-    const categories = await res.json();
-    
-    const filterCat = document.getElementById("filterCategory");
-    const catalogCat = document.getElementById("catalogCategorySelect");
-    
-    let html = `<option value="all">All Categories</option>`;
-    categories.forEach(c => {
-      html += `<option value="${c}">${c}</option>`;
-    });
-    filterCat.innerHTML = html;
-    catalogCat.innerHTML = html;
+    if (res.ok) {
+      const categories = await res.json();
+      const filterCat = document.getElementById("filterCategory");
+      const catalogCat = document.getElementById("catalogCategorySelect");
+      if (Array.isArray(categories)) {
+        let html = `<option value="all">All Categories</option>`;
+        categories.forEach(c => {
+          html += `<option value="${c}">${c}</option>`;
+        });
+        if (filterCat) filterCat.innerHTML = html;
+        if (catalogCat) catalogCat.innerHTML = html;
+      }
+    }
   } catch (e) {
-    console.error(e);
+    console.error("Categories fetch error:", e);
   }
 }
 
 function populateLocationDropdowns() {
+  if (!Array.isArray(allWarehouses)) allWarehouses = [];
+  if (!Array.isArray(allLocations)) allLocations = [];
   const ids = ["recDestLocation", "delSourceLocation", "traSourceLocation", "traDestLocation", "adjLocation", "newProdInitialLocation", "filterLocation"];
   
   ids.forEach(elemId => {
@@ -802,6 +951,7 @@ function populateLocationDropdowns() {
 }
 
 function populateProductDropdowns() {
+  if (!Array.isArray(allProducts)) allProducts = [];
   const ids = ["recProduct", "delProduct", "traProduct", "adjProduct"];
   ids.forEach(elemId => {
     const el = document.getElementById(elemId);
@@ -892,13 +1042,16 @@ async function loadDashboardData() {
   try {
     // 1. Fetch KPIs
     const kpiRes = await fetch("/operations/kpis");
-    const kpis = await kpiRes.json();
-    animateCounter("kpiTotalProducts", kpis.total_products);
-    document.getElementById("kpiStockUnits").textContent = `${kpis.total_stock_units} units on hand`;
-    animateCounter("kpiLowStock", kpis.low_stock_count);
-    animateCounter("kpiPendingReceipts", kpis.pending_receipts);
-    animateCounter("kpiPendingDeliveries", kpis.pending_deliveries);
-    animateCounter("kpiScheduledTransfers", kpis.scheduled_transfers);
+    if (kpiRes.ok) {
+      const kpis = await kpiRes.json();
+      animateCounter("kpiTotalProducts", kpis.total_products || 0);
+      const unitsEl = document.getElementById("kpiStockUnits");
+      if (unitsEl) unitsEl.textContent = `${kpis.total_stock_units || 0} units on hand`;
+      animateCounter("kpiLowStock", kpis.low_stock_count || 0);
+      animateCounter("kpiPendingReceipts", kpis.pending_receipts || 0);
+      animateCounter("kpiPendingDeliveries", kpis.pending_deliveries || 0);
+      animateCounter("kpiScheduledTransfers", kpis.scheduled_transfers || 0);
+    }
 
     // 2. Fetch filtered documents
     applyFilters();
@@ -938,9 +1091,13 @@ async function applyFilters() {
 
   try {
     const res = await fetch(url);
-    allDocuments = await res.json();
-    renderOperationsTable(allDocuments, "operationsTableBody");
-    document.getElementById("filteredDocCount").textContent = `Showing ${allDocuments.length} documents`;
+    if (res.ok) {
+      const data = await res.json();
+      allDocuments = Array.isArray(data) ? data : [];
+      renderOperationsTable(allDocuments, "operationsTableBody");
+      const countEl = document.getElementById("filteredDocCount");
+      if (countEl) countEl.textContent = `Showing ${allDocuments.length} documents`;
+    }
   } catch (err) {
     console.error(err);
   }
@@ -1067,8 +1224,10 @@ async function loadSingleOperationsView(typeSingular) {
 
   try {
     const res = await fetch(`/operations/documents?doc_type=${info.type}&limit=100`);
-    const docs = await res.json();
-    renderOperationsTable(docs, "singleOperationsTableBody");
+    if (res.ok) {
+      const docs = await res.json();
+      renderOperationsTable(Array.isArray(docs) ? docs : [], "singleOperationsTableBody");
+    }
   } catch (err) {
     console.error(err);
   }
@@ -1640,9 +1799,13 @@ function quickOrderReceipt(productId) {
 async function loadLedgerData() {
   try {
     const res = await fetch("/operations/ledger?limit=150");
-    const ledger = await res.json();
-    renderLedgerTable(ledger);
-    document.getElementById("ledgerCountBadge").textContent = `${ledger.length} total movements logged`;
+    if (res.ok) {
+      const ledger = await res.json();
+      const entries = Array.isArray(ledger) ? ledger : [];
+      renderLedgerTable(entries);
+      const badge = document.getElementById("ledgerCountBadge");
+      if (badge) badge.textContent = `${entries.length} total movements logged`;
+    }
   } catch (err) {
     console.error(err);
   }
@@ -1651,6 +1814,7 @@ async function loadLedgerData() {
 function renderLedgerTable(entries) {
   const tbody = document.getElementById("ledgerTableBody");
   if (!tbody) return;
+  if (!Array.isArray(entries)) entries = [];
 
   if (entries.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-slate-500 font-mono">No ledger entries recorded yet.</td></tr>`;
@@ -1924,8 +2088,9 @@ async function runPdfDemoWorkflow() {
       })
     });
     if (!res1.ok) {
-      const err = await res1.json();
-      throw new Error(`Step 1 failed: ${err.detail || 'Receipt failed'}`);
+      let errDetail = 'Receipt failed';
+      try { const err = await res1.json(); errDetail = err.detail || errDetail; } catch (_) {}
+      throw new Error(`Step 1 failed: ${errDetail}`);
     }
 
     await new Promise(r => setTimeout(r, 1200));
@@ -1947,8 +2112,9 @@ async function runPdfDemoWorkflow() {
       })
     });
     if (!res2.ok) {
-      const err = await res2.json();
-      throw new Error(`Step 2 failed: ${err.detail || 'Transfer failed'}`);
+      let errDetail = 'Transfer failed';
+      try { const err = await res2.json(); errDetail = err.detail || errDetail; } catch (_) {}
+      throw new Error(`Step 2 failed: ${errDetail}`);
     }
 
     await new Promise(r => setTimeout(r, 1200));
@@ -1970,8 +2136,9 @@ async function runPdfDemoWorkflow() {
       })
     });
     if (!res3.ok) {
-      const err = await res3.json();
-      throw new Error(`Step 3 failed: ${err.detail || 'Delivery failed'}`);
+      let errDetail = 'Delivery failed';
+      try { const err = await res3.json(); errDetail = err.detail || errDetail; } catch (_) {}
+      throw new Error(`Step 3 failed: ${errDetail}`);
     }
 
     await new Promise(r => setTimeout(r, 1200));
@@ -1979,6 +2146,9 @@ async function runPdfDemoWorkflow() {
     // Step 4: Adjust damaged items: 3 kg steel damaged (-3)
     showToast("Step 4 (PDF Flow): Adjusting damaged items: 3 kg steel damaged (-3)...", "info");
     const prodRes = await fetch(`/products/${steel.id}`);
+    if (!prodRes.ok) {
+      throw new Error("Could not retrieve steel product details for adjustment.");
+    }
     const steelDetail = await prodRes.json();
     const curQuant = steelDetail.quants ? steelDetail.quants.find(q => q.location_id === prodRack.id) : null;
     const currentAtRack = curQuant ? curQuant.quantity : 5.0;
@@ -1995,8 +2165,9 @@ async function runPdfDemoWorkflow() {
       })
     });
     if (!res4.ok) {
-      const err = await res4.json();
-      throw new Error(`Step 4 failed: ${err.detail || 'Adjustment failed'}`);
+      let errDetail = 'Adjustment failed';
+      try { const err = await res4.json(); errDetail = err.detail || errDetail; } catch (_) {}
+      throw new Error(`Step 4 failed: ${errDetail}`);
     }
 
     showToast("Completed all 4 steps from StockSense.pdf! Redirecting to Move History...", "success");
@@ -2098,7 +2269,9 @@ let staffTasksCache = null;
 async function loadStaffTasks() {
   try {
     const res = await fetch("/operations/staff/tasks");
+    if (!res.ok) return;
     const data = await res.json();
+    if (!data || !data.metrics) return;
     staffTasksCache = data;
 
     // Update KPI indicators
@@ -2106,24 +2279,24 @@ async function loadStaffTasks() {
     const kShelves = document.getElementById("staffKpiShelves");
     const kTransfers = document.getElementById("staffKpiTransfers");
     const kCounts = document.getElementById("staffKpiCounts");
-    if (kPicks) kPicks.textContent = data.metrics.pending_picking;
-    if (kShelves) kShelves.textContent = data.metrics.pending_shelving;
-    if (kTransfers) kTransfers.textContent = data.metrics.pending_transfers;
-    if (kCounts) kCounts.textContent = data.metrics.pending_counts;
+    if (kPicks) kPicks.textContent = data.metrics.pending_picking || 0;
+    if (kShelves) kShelves.textContent = data.metrics.pending_shelving || 0;
+    if (kTransfers) kTransfers.textContent = data.metrics.pending_transfers || 0;
+    if (kCounts) kCounts.textContent = data.metrics.pending_counts || 0;
 
     // Update sidebar badges
     const bPick = document.getElementById("staffNavPickBadge");
     const bShelve = document.getElementById("staffNavShelveBadge");
     const bTra = document.getElementById("staffNavTransferBadge");
-    if (bPick) bPick.textContent = data.metrics.pending_picking;
-    if (bShelve) bShelve.textContent = data.metrics.pending_shelving;
-    if (bTra) bTra.textContent = data.metrics.pending_transfers;
+    if (bPick) bPick.textContent = data.metrics.pending_picking || 0;
+    if (bShelve) bShelve.textContent = data.metrics.pending_shelving || 0;
+    if (bTra) bTra.textContent = data.metrics.pending_transfers || 0;
 
     // Render Workbenches
-    renderStaffPicking(data.picking_tasks);
-    renderStaffShelving(data.shelving_tasks);
-    renderStaffTransfers(data.transfer_tasks);
-    renderStaffCounting(data.counting_tasks);
+    renderStaffPicking(Array.isArray(data.picking_tasks) ? data.picking_tasks : []);
+    renderStaffShelving(Array.isArray(data.shelving_tasks) ? data.shelving_tasks : []);
+    renderStaffTransfers(Array.isArray(data.transfer_tasks) ? data.transfer_tasks : []);
+    renderStaffCounting(Array.isArray(data.counting_tasks) ? data.counting_tasks : []);
     populateStaffTransferDropdowns();
 
     lucide.createIcons();

@@ -339,10 +339,10 @@ async def staff_execute_transfer_doc(doc_id: int, db: AsyncSession = Depends(get
 
 @router.post("/reset-demo")
 async def reset_demo_data():
-    """Reset PostgreSQL database to clean seed state matching the PDF problem statement."""
+    """Reset database to clean seed state matching the PDF problem statement."""
     from backend.seed import seed_data
     try:
-        await seed_data()
+        await seed_data(drop=True)
         return {"status": "success", "message": "StockSense database reset to initial demo state successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reset demo: {str(e)}")

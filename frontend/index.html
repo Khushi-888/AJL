@@ -25,7 +25,7 @@
   <script src="https://cdn.jsdelivr.net/npm/motion@10.18.0/dist/motion.umd.js"></script>
 
   <!-- Custom Stylesheet (Light Architectural Theme & Flow Styles) -->
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="style.css">
 
   <script>
     tailwind.config = {
@@ -90,6 +90,13 @@
 
     <!-- Right Controls -->
     <div class="flex items-center gap-2 sm:gap-3">
+      <!-- Backend Target Switcher / Indicator -->
+      <button onclick="toggleBackendTarget()" id="backendTargetBadge" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition shadow-xs cursor-pointer" title="Click to toggle backend target: Cloud API (Render) vs Localhost (8000)">
+        <span id="backendDot" class="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+        <span id="backendLabel">Cloud API</span>
+        <i data-lucide="server" class="w-3.5 h-3.5 opacity-60"></i>
+      </button>
+
       <!-- PostgreSQL 18 Live Status -->
       <div id="wsStatusBadge" class="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
         <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -2015,7 +2022,7 @@
   </div>
 
   <!-- Application Controllers -->
-  <script src="/static/warehouse3d.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="warehouse3d.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
