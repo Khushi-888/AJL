@@ -11,6 +11,20 @@ async def lifespan(app: FastAPI):
     # Ensure tables exist in PostgreSQL
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    
+    # Auto-seed database if empty
+    try:
+        from backend.database import AsyncSessionLocal
+        from backend import models
+        from sqlalchemy import select, func
+        async with AsyncSessionLocal() as db_session:
+            user_cnt = await db_session.scalar(select(func.count(models.User.id)))
+            if user_cnt == 0:
+                from backend.seed import seed_data
+                await seed_data()
+    except Exception as e:
+        print(f"Startup check/seed info: {e}")
+
     yield
     # Clean up on shutdown
     await engine.dispose()

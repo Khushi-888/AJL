@@ -89,6 +89,74 @@ async def login_json(req: LoginJsonRequest, db: AsyncSession = Depends(get_db)):
         }
     }
 
+@router.post("/google-login")
+async def google_login(req: schemas.GoogleLoginRequest, db: AsyncSession = Depends(get_db)):
+    """Sign In with Google. Auto-registers user with specified role if first time."""
+    result = await db.execute(select(models.User).where(models.User.email == req.email))
+    user = result.scalars().first()
+    
+    if not user:
+        import secrets
+        random_pw = secrets.token_urlsafe(16)
+        hashed_password = auth.get_password_hash(random_pw)
+        user = models.User(
+            name=req.name or req.email.split("@")[0].capitalize(),
+            email=req.email,
+            hashed_password=hashed_password,
+            role=req.role or models.RoleEnum.staff
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    else:
+        changed = False
+        if req.role and user.role != req.role:
+            user.role = req.role
+            changed = True
+        if req.name and (not user.name or user.name == "Inventory User"):
+            user.name = req.name
+            changed = True
+        if changed:
+            await db.commit()
+            await db.refresh(user)
+    
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.email, "role": user.role}, expires_delta=access_token_expires
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "name": user.name or user.email.split('@')[0],
+            "email": user.email,
+            "role": user.role
+        }
+    }
+
+@router.post("/change-password")
+async def change_password(req: schemas.ChangePasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Change or reset password using OTP code verification."""
+    from backend.events import event_manager
+    stored_code = await event_manager.get_cache(f"otp:{req.email}")
+    if not stored_code:
+        raise HTTPException(status_code=400, detail="OTP expired or not found. Please request a new OTP.")
+        
+    if stored_code != req.code:
+        raise HTTPException(status_code=400, detail="Invalid OTP code.")
+        
+    result = await db.execute(select(models.User).where(models.User.email == req.email))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User with this email not found.")
+        
+    user.hashed_password = auth.get_password_hash(req.new_password)
+    await db.commit()
+    await event_manager.delete_cache(f"otp:{req.email}")
+    
+    return {"message": "Password changed successfully. You may now sign in with your new password."}
+
 async def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> Optional[models.User]:
     if not token:
         return None

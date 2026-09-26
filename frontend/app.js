@@ -1,6 +1,7 @@
 /**
  * StockSense - Main Frontend Application Logic
- * Implements all specifications from StockSense.pdf
+ * Integrates Babylon.js 3D Digital Twin & Motion.dev
+ * Aligned with StockSense.pdf Problem Statement
  */
 
 // Global State
@@ -18,6 +19,7 @@ let allDocuments = [];
 let stockChartInstance = null;
 let currentView = "dashboard";
 let currentProductSubTab = "catalog";
+let currentSelected3DRack = null;
 
 // WebSocket connection
 let ws = null;
@@ -28,10 +30,197 @@ document.addEventListener("DOMContentLoaded", async () => {
   checkAuthSession();
   setupWebSocket();
   await loadInitialData();
+  init3DWarehouse();
   navigateTo("dashboard");
+  initMotionAnimations();
 });
 
-// Authentication session
+// Initialize Babylon.js 3D Digital Twin
+function init3DWarehouse() {
+  try {
+    if (typeof BABYLON !== "undefined" && typeof Warehouse3D !== "undefined") {
+      window.warehouse3D = new Warehouse3D("babylonCanvas");
+      
+      // Hook 3D interaction callback
+      window.on3DRackSelected = (rackName) => {
+        showRackHUD(rackName);
+      };
+
+      // Update 3D beacons based on stock
+      updateAll3DBeacons();
+    }
+  } catch (err) {
+    console.error("Babylon.js 3D Init error:", err);
+  }
+}
+
+function set3DPreset(preset) {
+  if (window.warehouse3D) {
+    window.warehouse3D.setCameraPreset(preset);
+  }
+}
+
+function trigger3DFlowStep(stepNum) {
+  // Update button active state in top scrubber
+  for (let i = 0; i <= 4; i++) {
+    const btn = document.getElementById(`flowStepBtn-${i}`);
+    if (btn) {
+      if (i === stepNum) {
+        btn.className = "flow-step-btn px-2.5 py-1 text-xs font-semibold rounded-xl active";
+      } else {
+        btn.className = "flow-step-btn px-2.5 py-1 text-xs font-semibold rounded-xl text-slate-600 hover:text-slate-900";
+      }
+    }
+  }
+
+  if (window.warehouse3D) {
+    window.warehouse3D.playFlowStep(stepNum);
+  }
+  lucide.createIcons();
+}
+
+function closeFlowBanner() {
+  if (window.warehouse3D) {
+    window.warehouse3D.hideProcessBanner();
+  } else {
+    const banner = document.getElementById("flowExplanationCard");
+    if (banner) banner.classList.add("hidden");
+  }
+}
+
+function toggle3DRotation() {
+  if (window.warehouse3D) {
+    const isRotating = window.warehouse3D.toggleAutoRotate();
+    const btn = document.getElementById("btnAutoRotate");
+    btn.className = isRotating 
+      ? "p-1.5 rounded-xl bg-indigo-50 text-indigo-700 transition" 
+      : "p-1.5 rounded-xl hover:bg-slate-100 text-slate-500 transition";
+  }
+}
+
+function showRackHUD(rackName) {
+  currentSelected3DRack = rackName;
+  const hud = document.getElementById("rackInspectorHUD");
+  const title = document.getElementById("hudRackTitle");
+  const wh = document.getElementById("hudRackWh");
+  const itemsContainer = document.getElementById("hudRackItemsList");
+
+  const loc = allLocations.find(l => l.name === rackName);
+  title.textContent = rackName;
+  wh.textContent = loc && loc.warehouse ? loc.warehouse.name : "Warehouse Facility";
+
+  // Find products stored in this location
+  let itemsHtml = "";
+  let totalInRack = 0;
+  if (loc) {
+    allProducts.forEach(p => {
+      const q = p.quants.find(quant => quant.location_id === loc.id);
+      if (q && q.quantity > 0) {
+        totalInRack += q.quantity;
+        itemsHtml += `
+          <div class="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+            <div>
+              <span class="font-bold text-slate-800">${p.name}</span>
+              <span class="text-[10px] text-slate-500 block font-mono">${p.sku}</span>
+            </div>
+            <span class="font-mono font-bold text-indigo-600">${q.quantity} ${p.uom}</span>
+          </div>
+        `;
+      }
+    });
+  }
+
+  if (!itemsHtml) {
+    itemsHtml = `<p class="text-xs text-slate-500 italic py-2">No stock currently stored on this shelf.</p>`;
+  }
+
+  itemsContainer.innerHTML = itemsHtml;
+  hud.classList.remove("hidden");
+
+  // Motion pop-in
+  if (window.Motion) {
+    Motion.animate(hud, { opacity: [0, 1], y: [15, 0], scale: [0.96, 1] }, { easing: "ease-out", duration: 0.3 });
+  }
+  lucide.createIcons();
+}
+
+function closeRackHUD() {
+  document.getElementById("rackInspectorHUD").classList.add("hidden");
+}
+
+function quickTransferFromRack() {
+  if (!currentSelected3DRack) return;
+  const loc = allLocations.find(l => l.name === currentSelected3DRack);
+  if (loc) {
+    openModal("transferModal");
+    document.getElementById("traSourceLocation").value = loc.id;
+  }
+}
+
+function quickAdjustRack() {
+  if (!currentSelected3DRack) return;
+  const loc = allLocations.find(l => l.name === currentSelected3DRack);
+  if (loc) {
+    openModal("adjustmentModal");
+    document.getElementById("adjLocation").value = loc.id;
+    updateRecordedStockDisplay();
+  }
+}
+
+function updateAll3DBeacons() {
+  if (!window.warehouse3D) return;
+
+  allLocations.forEach(loc => {
+    let hasLowStock = false;
+    let hasStock = false;
+
+    allProducts.forEach(p => {
+      const q = p.quants.find(quant => quant.location_id === loc.id);
+      if (q && q.quantity > 0) {
+        hasStock = true;
+        if (p.is_low_stock) hasLowStock = true;
+      }
+    });
+
+    const status = hasLowStock ? "low" : (hasStock ? "normal" : "medium");
+    window.warehouse3D.updateRackStatus(loc.name, status);
+  });
+}
+
+// Motion.dev animations
+function initMotionAnimations() {
+  if (window.Motion) {
+    Motion.animate(".kpi-card", { opacity: [0, 1], y: [18, 0] }, {
+      delay: Motion.stagger(0.06),
+      easing: "ease-out",
+      duration: 0.45
+    });
+  }
+}
+
+function animateCounter(elementId, targetValue) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const start = parseInt(el.textContent) || 0;
+  const diff = targetValue - start;
+  const duration = 600;
+  const startTime = performance.now();
+
+  function updateNumber(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const easeOut = 1 - Math.pow(1 - progress, 3);
+    const current = Math.round(start + diff * easeOut);
+    el.textContent = current;
+    if (progress < 1) requestAnimationFrame(updateNumber);
+  }
+  requestAnimationFrame(updateNumber);
+}
+
+// Authentication state
+let selectedAuthRole = "manager";
+let selectedAuthMode = "signin";
+
 function checkAuthSession() {
   const saved = localStorage.getItem("stocksense_user");
   if (saved) {
@@ -47,9 +236,29 @@ function checkAuthSession() {
 }
 
 function updateUserUI() {
-  document.getElementById("headerUserName").textContent = currentUser.name || currentUser.email;
-  document.getElementById("headerUserRole").textContent = currentUser.role === "manager" ? "Inventory Manager" : "Warehouse Staff";
+  const isManager = currentUser.role === "manager";
   
+  // Header texts
+  const headerName = document.getElementById("headerUserName");
+  const headerRole = document.getElementById("headerUserRole");
+  if (headerName) headerName.textContent = currentUser.name || currentUser.email;
+  if (headerRole) headerRole.textContent = isManager ? "Inventory Manager" : "Warehouse Staff";
+  
+  // Header quick role toggle button
+  const toggleBtn = document.getElementById("headerRoleToggleBadge");
+  const toggleText = document.getElementById("headerRoleToggleText");
+  const toggleIcon = document.getElementById("headerRoleToggleIcon");
+  if (toggleBtn && toggleText) {
+    if (isManager) {
+      toggleBtn.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition shadow-xs cursor-pointer";
+      toggleText.textContent = "👑 Manager Mode";
+    } else {
+      toggleBtn.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition shadow-xs cursor-pointer";
+      toggleText.textContent = "👷 Staff Mode";
+    }
+  }
+
+  // Initials
   const initials = (currentUser.name || currentUser.email)
     .split(" ")
     .map(n => n[0])
@@ -57,33 +266,153 @@ function updateUserUI() {
     .substring(0, 2)
     .toUpperCase();
     
-  document.getElementById("userAvatar").textContent = initials || "U";
-  document.getElementById("profileBigAvatar").textContent = initials || "U";
-  document.getElementById("profileName").textContent = currentUser.name;
-  document.getElementById("profileEmail").textContent = currentUser.email;
-  document.getElementById("profileRoleBadge").textContent = currentUser.role === "manager" ? "Inventory Manager" : "Warehouse Staff";
-  document.getElementById("profileRoleDesc").textContent = currentUser.role === "manager" 
-    ? "Full inventory & warehouse authority (Manager)" 
-    : "Warehouse operations, picking, transfers (Staff)";
+  const uAvatar = document.getElementById("userAvatar");
+  const pAvatar = document.getElementById("profileBigAvatar");
+  if (uAvatar) uAvatar.textContent = initials || "U";
+  if (pAvatar) pAvatar.textContent = initials || "U";
+
+  // Profile modal elements
+  const pName = document.getElementById("profileName");
+  const pEmail = document.getElementById("profileEmail");
+  const pBadge = document.getElementById("profileRoleBadge");
+  const pDesc = document.getElementById("profileRoleDesc");
+  const pCurEmail = document.getElementById("profileCurrentEmail");
+  if (pName) pName.textContent = currentUser.name;
+  if (pEmail) pEmail.textContent = currentUser.email;
+  if (pBadge) {
+    pBadge.textContent = isManager ? "Inventory Manager" : "Warehouse Staff";
+    pBadge.className = isManager 
+      ? "inline-block mt-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700"
+      : "inline-block mt-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800";
+  }
+  if (pDesc) {
+    pDesc.textContent = isManager 
+      ? "Executive Authority: Incoming & Outgoing stock, vendors, deliveries & catalog" 
+      : "Ground Operations: Internal transfers, order picking, putaway shelving & cycle counts";
+  }
+  if (pCurEmail) pCurEmail.value = currentUser.email;
+
+  // Toggle Role-Specific Sidebar Menus
+  const sideMgr = document.getElementById("sidebarManagerNav");
+  const sideStf = document.getElementById("sidebarStaffNav");
+  if (sideMgr && sideStf) {
+    if (isManager) {
+      sideMgr.classList.remove("hidden");
+      sideStf.classList.add("hidden");
+    } else {
+      sideMgr.classList.add("hidden");
+      sideStf.classList.remove("hidden");
+    }
+  }
+
+  // Dashboard role adaptation
+  const mgrCenter = document.getElementById("managerStockCenter");
+  if (mgrCenter) {
+    if (isManager) {
+      mgrCenter.classList.remove("hidden");
+      renderManagerStockCenter();
+    } else {
+      mgrCenter.classList.add("hidden");
+    }
+  }
+
+  // Quick Action menu adaptation
+  const qMgr = document.getElementById("quickActionsManagerSection");
+  const qStf = document.getElementById("quickActionsStaffSection");
+  if (qMgr && qStf) {
+    if (isManager) {
+      qMgr.classList.remove("hidden");
+      qStf.classList.remove("hidden");
+    } else {
+      qMgr.classList.add("hidden");
+      qStf.classList.remove("hidden");
+    }
+  }
+
+  lucide.createIcons();
 }
 
-function setQuickRole(role) {
+// 1. SELECT USER ROLE IN AUTH MODAL (Manager vs Staff)
+function selectAuthRole(role) {
+  selectedAuthRole = role;
+  const btnMgr = document.getElementById("btnAuthRoleManager");
+  const btnStf = document.getElementById("btnAuthRoleStaff");
+  const btnSignSub = document.getElementById("btnSignInSubmit");
+  const badge = document.getElementById("signupRoleBadge");
+  const btnSignReg = document.getElementById("btnSignUpSubmit");
+  const emailIn = document.getElementById("loginEmail");
+  const passIn = document.getElementById("loginPassword");
+
   if (role === "manager") {
-    document.getElementById("loginEmail").value = "manager@stocksense.com";
-    document.getElementById("loginPassword").value = "admin123";
-    document.getElementById("btnQuickManager").className = "flex-1 py-1.5 px-3 rounded-xl text-xs font-bold bg-white text-indigo-700 shadow-xs transition";
-    document.getElementById("btnQuickStaff").className = "flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition";
+    if (btnMgr) btnMgr.className = "flex flex-col items-center py-2 px-3 rounded-xl text-xs font-bold bg-white text-indigo-700 shadow-xs border border-indigo-200 transition";
+    if (btnStf) btnStf.className = "flex flex-col items-center py-2 px-3 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition";
+    if (btnSignSub) btnSignSub.textContent = "Sign In as Inventory Manager";
+    if (badge) {
+      badge.textContent = "Inventory Manager";
+      badge.className = "font-bold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700";
+    }
+    if (btnSignReg) btnSignReg.textContent = "Create Inventory Manager Account";
+    if (emailIn && (!emailIn.value || emailIn.value.includes("stocksense.com"))) emailIn.value = "manager@stocksense.com";
+    if (passIn && (!passIn.value || passIn.value.includes("123"))) passIn.value = "admin123";
   } else {
-    document.getElementById("loginEmail").value = "staff@stocksense.com";
-    document.getElementById("loginPassword").value = "staff123";
-    document.getElementById("btnQuickStaff").className = "flex-1 py-1.5 px-3 rounded-xl text-xs font-bold bg-white text-indigo-700 shadow-xs transition";
-    document.getElementById("btnQuickManager").className = "flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition";
+    if (btnMgr) btnMgr.className = "flex flex-col items-center py-2 px-3 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition";
+    if (btnStf) btnStf.className = "flex flex-col items-center py-2 px-3 rounded-xl text-xs font-bold bg-white text-amber-800 shadow-xs border border-amber-300 transition";
+    if (btnSignSub) btnSignSub.textContent = "Sign In as Warehouse Staff";
+    if (badge) {
+      badge.textContent = "Warehouse Staff";
+      badge.className = "font-bold px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800";
+    }
+    if (btnSignReg) btnSignReg.textContent = "Create Warehouse Staff Account";
+    if (emailIn && (!emailIn.value || emailIn.value.includes("stocksense.com"))) emailIn.value = "staff@stocksense.com";
+    if (passIn && (!passIn.value || passIn.value.includes("123"))) passIn.value = "staff123";
   }
 }
 
+// 2. SWITCH AUTH MODAL MODE (Sign In / Sign Up / Reset with OTP)
+function switchAuthMode(mode) {
+  selectedAuthMode = mode;
+  const formIn = document.getElementById("authSignInForm");
+  const formUp = document.getElementById("authSignUpForm");
+  const viewOtp = document.getElementById("otpResetView");
+  const tabIn = document.getElementById("tabAuthSignIn");
+  const tabUp = document.getElementById("tabAuthSignUp");
+  const tabOtp = document.getElementById("tabAuthOtp");
+
+  [tabIn, tabUp, tabOtp].forEach(t => {
+    if (t) t.className = "flex-1 py-2 text-center text-slate-400 hover:text-slate-700 transition";
+  });
+
+  if (formIn) formIn.classList.add("hidden");
+  if (formUp) formUp.classList.add("hidden");
+  if (viewOtp) viewOtp.classList.add("hidden");
+
+  if (mode === "signin") {
+    if (formIn) formIn.classList.remove("hidden");
+    if (tabIn) tabIn.className = "flex-1 py-2 text-center text-indigo-600 border-b-2 border-indigo-600 font-bold transition";
+    document.getElementById("authModalTitle").textContent = "StockSense Sign In";
+  } else if (mode === "signup") {
+    if (formUp) formUp.classList.remove("hidden");
+    if (tabUp) tabUp.className = "flex-1 py-2 text-center text-indigo-600 border-b-2 border-indigo-600 font-bold transition";
+    document.getElementById("authModalTitle").textContent = "Create New Account";
+  } else if (mode === "otp") {
+    if (viewOtp) viewOtp.classList.remove("hidden");
+    if (tabOtp) tabOtp.className = "flex-1 py-2 text-center text-indigo-600 border-b-2 border-indigo-600 font-bold transition";
+    document.getElementById("authModalTitle").textContent = "Reset Password";
+    const curEmail = document.getElementById("loginEmail") ? document.getElementById("loginEmail").value : "";
+    if (curEmail && document.getElementById("otpEmail")) document.getElementById("otpEmail").value = curEmail;
+  }
+}
+
+// Quick demo buttons helper
+function setQuickRole(role) {
+  selectAuthRole(role);
+  switchAuthMode("signin");
+}
+
+// 3. HANDLE SIGN IN
 async function handleLogin(e) {
-  e.preventDefault();
-  const email = document.getElementById("loginEmail").value;
+  if (e) e.preventDefault();
+  const email = document.getElementById("loginEmail").value.trim();
   const password = document.getElementById("loginPassword").value;
 
   try {
@@ -100,10 +429,122 @@ async function handleLogin(e) {
     localStorage.setItem("stocksense_user", JSON.stringify(data.user));
     updateUserUI();
     closeModal("loginModal");
-    showToast(`Welcome back, ${currentUser.name}!`, "success");
+    showToast(`Welcome back, ${currentUser.name}! (${currentUser.role === 'manager' ? 'Inventory Manager' : 'Warehouse Staff'})`, "success");
     await loadInitialData();
+    if (currentUser.role === "staff") {
+      navigateTo("staff");
+    } else {
+      navigateTo("dashboard");
+    }
   } catch (err) {
     showToast(err.message, "error");
+  }
+}
+
+// 4. HANDLE SIGN UP (NEW ACCOUNT)
+async function handleSignUp(e) {
+  if (e) e.preventDefault();
+  const name = document.getElementById("signupName").value.trim();
+  const email = document.getElementById("signupEmail").value.trim();
+  const password = document.getElementById("signupPassword").value;
+  const role = selectedAuthRole;
+
+  if (!email || !password) return showToast("Please fill all required fields", "error");
+
+  try {
+    const res = await fetch("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, email, password, role })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Sign up failed");
+
+    showToast(`Account created as ${role === 'manager' ? 'Inventory Manager' : 'Warehouse Staff'}! Logging in...`, "success");
+
+    // Automatically sign in
+    const loginRes = await fetch("/auth/login-json", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    const loginData = await loginRes.json();
+    if (loginRes.ok) {
+      currentUser = loginData.user;
+      localStorage.setItem("stocksense_token", loginData.access_token);
+      localStorage.setItem("stocksense_user", JSON.stringify(loginData.user));
+      updateUserUI();
+      closeModal("loginModal");
+      await loadInitialData();
+      if (currentUser.role === "staff") {
+        navigateTo("staff");
+      } else {
+        navigateTo("dashboard");
+      }
+    } else {
+      switchAuthMode("signin");
+      document.getElementById("loginEmail").value = email;
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+// 5. GOOGLE AUTHENTICATION INTEGRATION
+function openGoogleAuthModal() {
+  openModal("googleAuthModal");
+}
+
+async function selectGooglePreset(email, name, role) {
+  try {
+    const res = await fetch("/auth/google-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name, role })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Google authentication failed");
+
+    currentUser = data.user;
+    localStorage.setItem("stocksense_token", data.access_token);
+    localStorage.setItem("stocksense_user", JSON.stringify(data.user));
+    updateUserUI();
+    closeModal("googleAuthModal");
+    closeModal("loginModal");
+    showToast(`Signed in with Google as ${currentUser.name}! (${currentUser.role === 'manager' ? 'Inventory Manager' : 'Warehouse Staff'})`, "success");
+    await loadInitialData();
+    if (currentUser.role === "staff") {
+      navigateTo("staff");
+    } else {
+      navigateTo("dashboard");
+    }
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function handleCustomGoogleLogin(e) {
+  if (e) e.preventDefault();
+  const email = document.getElementById("customGoogleEmail").value.trim();
+  const name = document.getElementById("customGoogleName").value.trim() || email.split("@")[0];
+  const role = document.getElementById("customGoogleRole").value;
+  await selectGooglePreset(email, name, role);
+}
+
+// 6. FAST HEADER ROLE SWITCHER
+async function toggleQuickRoleSwitch() {
+  if (currentUser.role === "manager") {
+    // Switch to Staff demo user
+    showToast("Switching to Warehouse Staff mode...", "info");
+    document.getElementById("loginEmail").value = "staff@stocksense.com";
+    document.getElementById("loginPassword").value = "staff123";
+    await handleLogin();
+  } else {
+    // Switch to Manager demo user
+    showToast("Switching to Inventory Manager mode...", "info");
+    document.getElementById("loginEmail").value = "manager@stocksense.com";
+    document.getElementById("loginPassword").value = "admin123";
+    await handleLogin();
   }
 }
 
@@ -115,21 +556,7 @@ function handleLogout() {
   showToast("Logged out successfully.", "info");
 }
 
-// OTP Password Reset Flow (PDF Page 1)
-function switchAuthView(view) {
-  if (view === "otp") {
-    document.getElementById("loginForm").classList.add("hidden");
-    document.getElementById("otpResetView").classList.remove("hidden");
-    document.getElementById("authModalTitle").textContent = "Reset Password";
-    document.getElementById("authModalSubtitle").textContent = "OTP Verification";
-  } else {
-    document.getElementById("otpResetView").classList.add("hidden");
-    document.getElementById("loginForm").classList.remove("hidden");
-    document.getElementById("authModalTitle").textContent = "StockSense Sign In";
-    document.getElementById("authModalSubtitle").textContent = "Modular Inventory Management System";
-  }
-}
-
+// 7. PRE-LOGIN OTP PASSWORD RESET
 async function handleGenerateOtp() {
   const email = document.getElementById("otpEmail").value.trim();
   if (!email) return showToast("Enter your email address", "error");
@@ -139,9 +566,11 @@ async function handleGenerateOtp() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Failed to generate OTP");
 
-    showToast(`OTP generated: ${data.code} (Expires in 5 mins)`, "success");
-    document.getElementById("otpStep2").classList.remove("hidden");
-    document.getElementById("otpCode").value = data.code;
+    showToast(`OTP generated: ${data.code} (Valid for 5 mins)`, "success");
+    const step2 = document.getElementById("otpStep2");
+    if (step2) step2.classList.remove("hidden");
+    const codeIn = document.getElementById("otpCode");
+    if (codeIn) codeIn.value = data.code;
   } catch (err) {
     showToast(err.message, "error");
   }
@@ -165,10 +594,70 @@ async function handleResetPassword() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Reset failed");
 
-    showToast("Password reset successfully! Please sign in.", "success");
-    switchAuthView("login");
+    showToast("Password reset successfully! Please sign in with your new password.", "success");
+    switchAuthMode("signin");
     document.getElementById("loginEmail").value = email;
     document.getElementById("loginPassword").value = new_password;
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+// 8. IN-PROFILE OTP PASSWORD CHANGE
+function toggleProfilePasswordChange() {
+  const sec = document.getElementById("profilePasswordChangeSection");
+  const btn = document.getElementById("btnToggleProfileOtp");
+  if (!sec) return;
+  const isHidden = sec.classList.contains("hidden");
+  if (isHidden) {
+    sec.classList.remove("hidden");
+    if (btn) btn.textContent = "Hide Form";
+    document.getElementById("profileCurrentEmail").value = currentUser.email;
+  } else {
+    sec.classList.add("hidden");
+    if (btn) btn.textContent = "Show Form";
+  }
+}
+
+async function handleProfileSendOtp() {
+  const email = currentUser.email;
+  if (!email) return showToast("User email not found", "error");
+
+  try {
+    const res = await fetch(`/otp/generate/${encodeURIComponent(email)}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to generate OTP");
+
+    showToast(`OTP Code: ${data.code} sent to ${email}`, "success");
+    const step2 = document.getElementById("profileOtpStep2");
+    if (step2) step2.classList.remove("hidden");
+    const codeIn = document.getElementById("profileOtpCode");
+    if (codeIn) codeIn.value = data.code;
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function handleProfileChangePasswordSubmit() {
+  const email = currentUser.email;
+  const code = document.getElementById("profileOtpCode").value.trim();
+  const new_password = document.getElementById("profileNewPassword").value;
+
+  if (!code || !new_password) {
+    return showToast("Please enter both the OTP code and new password", "error");
+  }
+
+  try {
+    const res = await fetch("/auth/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, code, new_password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Password change failed");
+
+    showToast("Password updated successfully in PostgreSQL!", "success");
+    toggleProfilePasswordChange();
   } catch (err) {
     showToast(err.message, "error");
   }
@@ -184,8 +673,8 @@ function setupWebSocket() {
 
     ws.onopen = () => {
       document.getElementById("wsStatusBadge").innerHTML = `
-        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        <span class="hidden sm:inline">Live Sync</span>
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span class="hidden sm:inline">PostgreSQL 18 Sync</span>
       `;
     };
 
@@ -193,8 +682,7 @@ function setupWebSocket() {
       try {
         const payload = JSON.parse(event.data);
         if (payload.event === "stock_updated") {
-          showToast(`Stock updated: ${payload.data.trigger} (${payload.data.change > 0 ? '+' : ''}${payload.data.change})`, "info");
-          // Refresh background data
+          showToast(`Stock Telemetry: ${payload.data.trigger} (${payload.data.change > 0 ? '+' : ''}${payload.data.change})`, "info");
           refreshCurrentViewData();
         }
       } catch (e) {}
@@ -221,6 +709,7 @@ async function loadInitialData() {
   ]);
   populateLocationDropdowns();
   populateProductDropdowns();
+  updateAll3DBeacons();
 }
 
 async function fetchWarehousesAndLocations() {
@@ -275,11 +764,30 @@ function populateLocationDropdowns() {
     const el = document.getElementById(elemId);
     if (!el) return;
     
-    let html = elemId === "filterLocation" ? `<option value="">All Locations</option>` : "";
-    allLocations.forEach(loc => {
-      const whName = loc.warehouse ? loc.warehouse.name : "Warehouse";
-      html += `<option value="${loc.id}">${loc.name} (${whName})</option>`;
-    });
+    let html = "";
+    if (elemId === "filterLocation") {
+      html += `<option value="">All Warehouses & Locations</option>`;
+      if (allWarehouses.length > 0) {
+        html += `<optgroup label="🏢 Warehouses">`;
+        allWarehouses.forEach(wh => {
+          html += `<option value="wh_${wh.id}">🏢 ${wh.name} (${wh.code || 'WH'})</option>`;
+        });
+        html += `</optgroup>`;
+      }
+      if (allLocations.length > 0) {
+        html += `<optgroup label="📍 Specific Locations">`;
+        allLocations.forEach(loc => {
+          const whName = loc.warehouse ? loc.warehouse.name : "Warehouse";
+          html += `<option value="${loc.id}">📍 ${loc.name} (${whName})</option>`;
+        });
+        html += `</optgroup>`;
+      }
+    } else {
+      allLocations.forEach(loc => {
+        const whName = loc.warehouse ? loc.warehouse.name : "Warehouse";
+        html += `<option value="${loc.id}">${loc.name} (${whName})</option>`;
+      });
+    }
     el.innerHTML = html;
   });
 
@@ -309,34 +817,41 @@ function populateProductDropdowns() {
 // Navigation Handler
 function navigateTo(view) {
   currentView = view;
-  // Update sidebar active class
+  
   document.querySelectorAll(".nav-btn").forEach(btn => {
     const nav = btn.getAttribute("data-nav");
-    if (nav === view || (view.startsWith("operations") && nav === view)) {
-      btn.className = "nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold bg-indigo-50 text-indigo-700 transition";
+    if (nav === view || (view.startsWith("operations") && nav === view) || (view === "staff" && nav === "staff")) {
+      btn.className = "nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold bg-indigo-50 text-indigo-700 border border-indigo-200/80 transition";
     } else {
-      btn.className = "nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition";
+      btn.className = "nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition";
     }
   });
 
-  // Hide all views
-  const views = ["dashboard", "products", "operations-single", "ledger", "settings"];
+  const views = ["dashboard", "products", "operations-single", "ledger", "settings", "staff"];
   views.forEach(v => {
     const el = document.getElementById(`view-${v}`);
     if (el) el.classList.add("hidden");
   });
 
-  // Close mobile sidebar
   if (window.innerWidth < 1024) {
     const sidebar = document.getElementById("sidebar");
     const backdrop = document.getElementById("mobileBackdrop");
-    sidebar.classList.add("-translate-x-full");
-    backdrop.classList.add("hidden");
+    if (sidebar) sidebar.classList.add("-translate-x-full");
+    if (backdrop) backdrop.classList.add("hidden");
   }
 
   if (view === "dashboard") {
-    document.getElementById("view-dashboard").classList.remove("hidden");
+    const dEl = document.getElementById("view-dashboard");
+    if (dEl) dEl.classList.remove("hidden");
     loadDashboardData();
+    renderManagerStockCenter();
+    if (window.warehouse3D) {
+      setTimeout(() => window.warehouse3D.engine.resize(), 100);
+    }
+  } else if (view === "staff") {
+    const sEl = document.getElementById("view-staff");
+    if (sEl) sEl.classList.remove("hidden");
+    loadStaffTasks();
   } else if (view === "products") {
     document.getElementById("view-products").classList.remove("hidden");
     switchProductTab(currentProductSubTab);
@@ -378,18 +893,21 @@ async function loadDashboardData() {
     // 1. Fetch KPIs
     const kpiRes = await fetch("/operations/kpis");
     const kpis = await kpiRes.json();
-    document.getElementById("kpiTotalProducts").textContent = kpis.total_products;
+    animateCounter("kpiTotalProducts", kpis.total_products);
     document.getElementById("kpiStockUnits").textContent = `${kpis.total_stock_units} units on hand`;
-    document.getElementById("kpiLowStock").textContent = kpis.low_stock_count;
-    document.getElementById("kpiPendingReceipts").textContent = kpis.pending_receipts;
-    document.getElementById("kpiPendingDeliveries").textContent = kpis.pending_deliveries;
-    document.getElementById("kpiScheduledTransfers").textContent = kpis.scheduled_transfers;
+    animateCounter("kpiLowStock", kpis.low_stock_count);
+    animateCounter("kpiPendingReceipts", kpis.pending_receipts);
+    animateCounter("kpiPendingDeliveries", kpis.pending_deliveries);
+    animateCounter("kpiScheduledTransfers", kpis.scheduled_transfers);
 
     // 2. Fetch filtered documents
     applyFilters();
 
     // 3. Render Chart
     renderStockChart();
+
+    // 4. Update 3D beacons
+    updateAll3DBeacons();
   } catch (err) {
     console.error("Dashboard load error:", err);
   }
@@ -399,14 +917,23 @@ async function loadDashboardData() {
 async function applyFilters() {
   const docType = document.getElementById("filterDocType").value;
   const status = document.getElementById("filterStatus").value;
-  const locId = document.getElementById("filterLocation").value;
+  const locVal = document.getElementById("filterLocation").value;
   const category = document.getElementById("filterCategory").value;
   const search = document.getElementById("globalSearchInput") ? document.getElementById("globalSearchInput").value.trim() : "";
 
   let url = `/operations/documents?limit=100`;
-  if (docType && docType !== "all") url += `&doc_type=${docType}`;
-  if (status && status !== "all") url += `&status=${status}`;
-  if (locId) url += `&location_id=${locId}`;
+  if (docType && docType !== "all") url += `&doc_type=${encodeURIComponent(docType)}`;
+  if (status && status !== "all") url += `&status=${encodeURIComponent(status)}`;
+  if (locVal) {
+    if (locVal.startsWith("wh_")) {
+      url += `&warehouse_id=${encodeURIComponent(locVal.replace("wh_", ""))}`;
+    } else {
+      url += `&location_id=${encodeURIComponent(locVal)}`;
+    }
+  }
+  if (category && category !== "all") {
+    url += `&category=${encodeURIComponent(category)}`;
+  }
   if (search) url += `&search=${encodeURIComponent(search)}`;
 
   try {
@@ -448,9 +975,9 @@ function renderOperationsTable(documents, tableBodyId) {
   if (documents.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="7" class="px-5 py-8 text-center text-slate-400">
-          <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
-          No operations match the selected filters.
+        <td colspan="7" class="px-5 py-8 text-center text-slate-500 font-mono text-xs">
+          <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 text-slate-600"></i>
+          No operations match the selected dynamic filters.
         </td>
       </tr>
     `;
@@ -467,15 +994,15 @@ function renderOperationsTable(documents, tableBodyId) {
 
   const statusConfig = {
     draft: { label: "Draft", color: "bg-slate-100 text-slate-600 border-slate-200" },
-    waiting: { label: "Waiting", color: "bg-amber-100 text-amber-700 border-amber-200" },
-    ready: { label: "Ready", color: "bg-indigo-100 text-indigo-700 border-indigo-200" },
-    done: { label: "Done", color: "bg-emerald-100 text-emerald-800 border-emerald-200" },
-    canceled: { label: "Canceled", color: "bg-rose-100 text-rose-700 border-rose-200" },
+    waiting: { label: "Waiting", color: "bg-amber-50 text-amber-700 border-amber-200" },
+    ready: { label: "Ready", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+    done: { label: "Done", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+    canceled: { label: "Canceled", color: "bg-rose-50 text-rose-700 border-rose-200" },
   };
 
   tbody.innerHTML = documents.map(doc => {
-    const tCfg = typeConfig[doc.doc_type] || { label: doc.doc_type, color: "bg-slate-100 text-slate-600", icon: "file" };
-    const sCfg = statusConfig[doc.status] || { label: doc.status, color: "bg-slate-100 text-slate-600" };
+    const tCfg = typeConfig[doc.doc_type] || { label: doc.doc_type, color: "bg-slate-100 text-slate-600 border-slate-200", icon: "file" };
+    const sCfg = statusConfig[doc.status] || { label: doc.status, color: "bg-slate-100 text-slate-600 border-slate-200" };
     
     const itemsSummary = (doc.lines && doc.lines.length > 0)
       ? doc.lines.map(l => `${l.quantity} × ${l.product ? l.product.name : 'Item'}`).join(", ")
@@ -487,7 +1014,7 @@ function renderOperationsTable(documents, tableBodyId) {
     let actionBtn = "";
     if (doc.status !== "done" && doc.status !== "canceled") {
       actionBtn = `
-        <button onclick="handleValidateDocument(${doc.id})" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-2xs transition">
+        <button onclick="handleValidateDocument(${doc.id})" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition active:scale-95">
           Validate
         </button>
       `;
@@ -495,23 +1022,23 @@ function renderOperationsTable(documents, tableBodyId) {
 
     return `
       <tr class="hover:bg-slate-50/80 transition">
-        <td class="px-5 py-3.5 font-bold text-slate-900 flex items-center gap-1.5">
+        <td class="px-5 py-3.5 font-bold font-mono text-indigo-600 flex items-center gap-1.5 text-xs">
           <i data-lucide="${tCfg.icon}" class="w-3.5 h-3.5 text-slate-400"></i>
           <span>${doc.reference}</span>
         </td>
         <td class="px-4 py-3.5">
-          <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${tCfg.color}">
+          <span class="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${tCfg.color} font-mono">
             ${tCfg.label}
           </span>
         </td>
         <td class="px-4 py-3.5 font-medium text-slate-800 max-w-xs truncate">${targetDesc}</td>
-        <td class="px-4 py-3.5 text-slate-600 text-xs max-w-xs truncate">${itemsSummary}</td>
+        <td class="px-4 py-3.5 text-slate-500 text-xs max-w-xs truncate">${itemsSummary}</td>
         <td class="px-4 py-3.5">
-          <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full border ${sCfg.color}">
+          <span class="inline-block text-[11px] font-bold px-2 py-0.5 rounded-full border ${sCfg.color} font-mono">
             ${sCfg.label}
           </span>
         </td>
-        <td class="px-4 py-3.5 text-xs text-slate-400 whitespace-nowrap">${dateStr}</td>
+        <td class="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap font-mono">${dateStr}</td>
         <td class="px-5 py-3.5 text-right whitespace-nowrap">
           ${actionBtn}
         </td>
@@ -527,7 +1054,7 @@ async function loadSingleOperationsView(typeSingular) {
   const typeMap = {
     receipts: { type: "receipt", title: "1. Receipts (Incoming Stock)", subtitle: "Process arrival of goods from suppliers. Validating increases stock.", modal: "receiptModal" },
     deliveries: { type: "delivery", title: "2. Delivery Orders (Outgoing Stock)", subtitle: "Dispatch goods to customers. Validating decreases stock.", modal: "deliveryModal" },
-    transfers: { type: "transfer", title: "3. Internal Transfers", subtitle: "Move inventory between warehouses and locations.", modal: "transferModal" },
+    transfers: { type: "transfer", title: "3. Internal Transfers", subtitle: "Move inventory between warehouses and locations with 3D paths.", modal: "transferModal" },
     adjustments: { type: "adjustment", title: "4. Inventory Adjustments", subtitle: "Fix physical count and recorded stock discrepancies.", modal: "adjustmentModal" },
   };
 
@@ -553,7 +1080,7 @@ async function handleValidateDocument(docId) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Validation failed");
 
-    showToast(`Document ${data.reference} validated successfully!`, "success");
+    showToast(`Document ${data.reference} validated!`, "success");
     await loadInitialData();
     refreshCurrentViewData();
   } catch (err) {
@@ -588,7 +1115,14 @@ async function handleCreateReceipt(e) {
 
     closeModal("receiptModal");
     e.target.reset();
-    showToast(`Receipt ${data.reference} created (${validate_immediately ? 'Stock increased' : 'Ready'})`, "success");
+    showToast(`Receipt ${data.reference} created!`, "success");
+
+    // Animate 3D Receiving dock
+    const destLoc = allLocations.find(l => l.id === dest_location_id);
+    if (window.warehouse3D && destLoc) {
+      window.warehouse3D.animateTransfer("Inbound Dock", destLoc.name, quantity, "Steel Rods");
+    }
+
     await loadInitialData();
     refreshCurrentViewData();
   } catch (err) {
@@ -622,7 +1156,14 @@ async function handleCreateDelivery(e) {
 
     closeModal("deliveryModal");
     e.target.reset();
-    showToast(`Delivery ${data.reference} created (${validate_immediately ? 'Stock decreased' : 'Ready'})`, "success");
+    showToast(`Delivery ${data.reference} created!`, "success");
+
+    // Animate 3D Dispatch dock
+    const srcLoc = allLocations.find(l => l.id === source_location_id);
+    if (window.warehouse3D && srcLoc) {
+      window.warehouse3D.animateTransfer(srcLoc.name, "Outbound Dock", quantity, "Finished Goods");
+    }
+
     await loadInitialData();
     refreshCurrentViewData();
   } catch (err) {
@@ -661,6 +1202,14 @@ async function handleCreateTransfer(e) {
     closeModal("transferModal");
     e.target.reset();
     showToast(`Transfer ${data.reference} executed!`, "success");
+
+    // Trigger 3D Material Transfer Animation between racks
+    const srcLoc = allLocations.find(l => l.id === source_location_id);
+    const dstLoc = allLocations.find(l => l.id === dest_location_id);
+    if (window.warehouse3D && srcLoc && dstLoc) {
+      window.warehouse3D.animateTransfer(srcLoc.name, dstLoc.name, quantity, "Goods");
+    }
+
     await loadInitialData();
     refreshCurrentViewData();
   } catch (err) {
@@ -700,7 +1249,7 @@ function calculateAdjustmentDelta() {
   
   const deltaEl = document.getElementById("adjDeltaDisplay");
   deltaEl.textContent = `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`;
-  deltaEl.className = delta < 0 ? "text-lg font-bold text-rose-600" : (delta > 0 ? "text-lg font-bold text-emerald-600" : "text-lg font-bold text-slate-500");
+  deltaEl.className = delta < 0 ? "text-lg font-black text-rose-400" : (delta > 0 ? "text-lg font-black text-emerald-400" : "text-lg font-black text-slate-400");
 }
 
 async function handleCreateAdjustment(e) {
@@ -774,15 +1323,16 @@ async function handleCreateProduct(e) {
 
 function switchProductTab(tab) {
   currentProductSubTab = tab;
-  const tabs = ["catalog", "availability", "reorder"];
+  const tabs = ["catalog", "availability", "reorder", "categories"];
   tabs.forEach(t => {
     const btn = document.getElementById(`prodTab-${t}`);
     const subview = document.getElementById(`subview-${t}`);
+    if (!btn || !subview) return;
     if (t === tab) {
-      btn.className = "pb-3 border-b-2 border-indigo-600 text-indigo-600 transition";
+      btn.className = "pb-3 border-b-2 border-indigo-600 text-indigo-600 font-bold whitespace-nowrap transition";
       subview.classList.remove("hidden");
     } else {
-      btn.className = "pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition";
+      btn.className = "pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 whitespace-nowrap transition";
       subview.classList.add("hidden");
     }
   });
@@ -793,6 +1343,8 @@ function switchProductTab(tab) {
     loadStockMatrix();
   } else if (tab === "reorder") {
     loadReorderingRules();
+  } else if (tab === "categories") {
+    renderProductCategories();
   }
 }
 
@@ -801,32 +1353,191 @@ function renderProductCatalog(products) {
   if (!tbody) return;
 
   if (products.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-6 text-center text-slate-400">No products found.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="px-5 py-6 text-center text-slate-500 font-mono">No products registered in catalog.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = products.map(p => {
     const isLow = p.is_low_stock;
     const statusBadge = isLow
-      ? `<span class="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200"><i data-lucide="alert-triangle" class="w-3 h-3"></i> Low Stock</span>`
-      : `<span class="inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Sufficient</span>`;
+      ? `<span class="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 font-mono"><i data-lucide="alert-triangle" class="w-3 h-3"></i> Low Stock</span>`
+      : `<span class="inline-block text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">Safe Stock</span>`;
 
     return `
       <tr class="hover:bg-slate-50/80 transition">
-        <td class="px-5 py-3.5 font-mono font-bold text-xs text-indigo-700">${p.sku}</td>
+        <td class="px-5 py-3.5 font-mono font-bold text-xs text-indigo-600">${p.sku}</td>
         <td class="px-4 py-3.5 font-bold text-slate-900">${p.name}</td>
         <td class="px-4 py-3.5 text-slate-600">${p.category}</td>
-        <td class="px-4 py-3.5 text-slate-500">${p.uom}</td>
-        <td class="px-4 py-3.5 text-slate-600 font-semibold">${p.reorder_point} ${p.uom}</td>
-        <td class="px-4 py-3.5 font-black text-slate-900 text-sm ${isLow ? 'text-rose-600' : ''}">
+        <td class="px-4 py-3.5 text-slate-500 font-mono">${p.uom}</td>
+        <td class="px-4 py-3.5 text-slate-600 font-semibold font-mono">${p.reorder_point} ${p.uom}</td>
+        <td class="px-4 py-3.5 font-black text-sm font-mono ${isLow ? 'text-rose-600' : 'text-slate-900'}">
           ${p.total_stock} ${p.uom}
         </td>
-        <td class="px-5 py-3.5 text-right">${statusBadge}</td>
+        <td class="px-4 py-3.5">${statusBadge}</td>
+        <td class="px-5 py-3.5 text-right whitespace-nowrap">
+          <button onclick="openEditProductModal(${p.id})" class="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition">
+            <i data-lucide="edit-3" class="w-3.5 h-3.5 inline mr-1"></i> Edit
+          </button>
+        </td>
       </tr>
     `;
   }).join("");
 
   lucide.createIcons();
+}
+
+function renderProductCategories() {
+  const container = document.getElementById("productCategoriesGrid");
+  const countBadge = document.getElementById("categoryCountSummary");
+  if (!container) return;
+
+  const catMap = {};
+  allProducts.forEach(p => {
+    const cat = p.category || "General";
+    if (!catMap[cat]) {
+      catMap[cat] = {
+        name: cat,
+        products: [],
+        totalUnits: 0,
+        lowStockCount: 0
+      };
+    }
+    catMap[cat].products.push(p);
+    catMap[cat].totalUnits += (p.total_stock || 0);
+    if (p.is_low_stock) catMap[cat].lowStockCount++;
+  });
+
+  const catList = Object.values(catMap);
+  if (countBadge) countBadge.textContent = `${catList.length} Active Categories`;
+
+  if (catList.length === 0) {
+    container.innerHTML = `<p class="col-span-full text-center py-8 text-slate-400 font-mono">No product categories registered.</p>`;
+    return;
+  }
+
+  const categoryIcons = {
+    "Raw Materials": "layers",
+    "Furniture": "armchair",
+    "Components": "cpu",
+    "Hardware": "wrench",
+    "General": "package"
+  };
+
+  container.innerHTML = catList.map(c => {
+    const iconName = categoryIcons[c.name] || "boxes";
+    const prodItemsHtml = c.products.slice(0, 4).map(p => `
+      <div class="flex items-center justify-between text-xs py-1 border-b border-slate-50 last:border-0">
+        <span class="text-slate-700 font-medium truncate max-w-[150px]">${p.name}</span>
+        <span class="font-mono font-bold ${p.is_low_stock ? 'text-rose-600' : 'text-slate-600'}">${p.total_stock} ${p.uom}</span>
+      </div>
+    `).join("");
+
+    return `
+      <div class="bg-slate-50/70 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between hover:border-indigo-200 hover:shadow-xs transition">
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2.5">
+              <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+                <i data-lucide="${iconName}" class="w-4 h-4"></i>
+              </div>
+              <div>
+                <h4 class="text-sm font-bold text-slate-900">${c.name}</h4>
+                <span class="text-[11px] text-slate-500 font-mono">${c.products.length} products</span>
+              </div>
+            </div>
+            ${c.lowStockCount > 0 ? `<span class="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">${c.lowStockCount} Low</span>` : `<span class="text-[10px] font-semibold font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Healthy</span>`}
+          </div>
+
+          <div class="bg-white rounded-xl p-2.5 border border-slate-100 mb-3 space-y-1">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono mb-1">Products in Category</div>
+            ${prodItemsHtml}
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs">
+          <span class="font-mono font-bold text-indigo-700">${c.totalUnits} units total</span>
+          <button onclick="viewCategoryInCatalog('${c.name}')" class="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition">
+            View in Catalog <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  lucide.createIcons();
+}
+
+function viewCategoryInCatalog(categoryName) {
+  switchProductTab('catalog');
+  const catSelect = document.getElementById("catalogCategorySelect");
+  if (catSelect) {
+    catSelect.value = categoryName;
+    filterProductCatalog();
+  }
+}
+
+function openEditProductModal(productId) {
+  const p = allProducts.find(prod => prod.id === productId);
+  if (!p) return showToast("Product not found", "error");
+
+  document.getElementById("editProdId").value = p.id;
+  document.getElementById("editProdName").value = p.name;
+  document.getElementById("editProdSku").value = p.sku;
+  document.getElementById("editProdCategory").value = p.category || "General";
+  document.getElementById("editProdUom").value = p.uom || "Units";
+  document.getElementById("editProdReorderPoint").value = p.reorder_point || 10;
+
+  openModal("editProductModal");
+}
+
+async function handleUpdateProduct(e) {
+  e.preventDefault();
+  const id = document.getElementById("editProdId").value;
+  const name = document.getElementById("editProdName").value.trim();
+  const category = document.getElementById("editProdCategory").value.trim();
+  const uom = document.getElementById("editProdUom").value;
+  const reorder_point = parseFloat(document.getElementById("editProdReorderPoint").value) || 10;
+
+  try {
+    const res = await fetch(`/products/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, category, uom, reorder_point })
+    });
+    const updated = await res.json();
+    if (!res.ok) throw new Error(updated.detail || "Failed to update product");
+
+    showToast(`Product "${updated.name}" updated successfully!`, "success");
+    closeModal("editProductModal");
+    await loadInitialData();
+    refreshCurrentViewData();
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function handleResetDemoData() {
+  const btn = document.getElementById("resetDemoBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i> Resetting...`;
+  }
+  try {
+    const res = await fetch("/operations/reset-demo", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Failed to reset demo");
+    showToast(data.message || "Database reset to initial demo state!", "success");
+    await loadInitialData();
+    refreshCurrentViewData();
+  } catch (err) {
+    showToast(err.message, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<i data-lucide="rotate-ccw" class="w-3 h-3 text-slate-500"></i> Reset Demo State`;
+      lucide.createIcons();
+    }
+  }
 }
 
 function filterProductCatalog() {
@@ -849,7 +1560,7 @@ async function loadStockMatrix() {
     const table = document.getElementById("stockMatrixTable");
 
     let headerHtml = `
-      <thead class="bg-slate-50 text-xs uppercase font-bold text-slate-400 border-b border-slate-200">
+      <thead class="bg-slate-50 text-xs uppercase font-bold text-slate-500 border-b border-slate-200 font-mono">
         <tr>
           <th class="px-4 py-3">Product (SKU)</th>
           <th class="px-4 py-3">Total</th>
@@ -859,17 +1570,17 @@ async function loadStockMatrix() {
     });
     headerHtml += `</tr></thead>`;
 
-    let rowsHtml = `<tbody class="divide-y divide-slate-100">`;
+    let rowsHtml = `<tbody class="divide-y divide-slate-100 font-sans">`;
     data.products.forEach(p => {
       rowsHtml += `
-        <tr class="hover:bg-slate-50 transition">
+        <tr class="hover:bg-slate-50/80 transition">
           <td class="px-4 py-3 font-semibold text-slate-900">${p.product_name} <span class="text-xs text-slate-400 font-mono">(${p.sku})</span></td>
-          <td class="px-4 py-3 font-bold text-indigo-700">${p.total_stock} ${p.uom}</td>
+          <td class="px-4 py-3 font-bold text-indigo-600 font-mono">${p.total_stock} ${p.uom}</td>
       `;
       data.locations.forEach(loc => {
         const qty = p.locations[String(loc.id)] || 0;
         rowsHtml += `
-          <td class="px-4 py-3 text-right font-medium ${qty > 0 ? 'text-slate-800' : 'text-slate-300'}">
+          <td class="px-4 py-3 text-right font-mono font-medium ${qty > 0 ? 'text-slate-800' : 'text-slate-400'}">
             ${qty > 0 ? `${qty} ${p.uom}` : '-'}
           </td>
         `;
@@ -893,20 +1604,20 @@ async function loadReorderingRules() {
     
     tbody.innerHTML = rules.map(r => {
       return `
-        <tr class="hover:bg-slate-50 transition">
+        <tr class="hover:bg-slate-50/80 transition font-sans">
           <td class="px-5 py-3.5 font-bold text-slate-900">${r.product_name}</td>
-          <td class="px-4 py-3.5 font-mono text-xs text-slate-600">${r.sku}</td>
-          <td class="px-4 py-3.5 font-black ${r.alert ? 'text-rose-600' : 'text-slate-800'}">${r.current_stock} ${r.uom}</td>
-          <td class="px-4 py-3.5 text-slate-700 font-semibold">${r.reorder_point} ${r.uom}</td>
-          <td class="px-4 py-3.5 font-bold text-indigo-600">${r.suggested_order_qty > 0 ? `+${r.suggested_order_qty} ${r.uom}` : 'Optimal'}</td>
+          <td class="px-4 py-3.5 font-mono text-xs text-indigo-600">${r.sku}</td>
+          <td class="px-4 py-3.5 font-mono font-black ${r.alert ? 'text-rose-600' : 'text-slate-800'}">${r.current_stock} ${r.uom}</td>
+          <td class="px-4 py-3.5 font-mono text-slate-500">${r.reorder_point} ${r.uom}</td>
+          <td class="px-4 py-3.5 font-mono font-bold text-indigo-600">${r.suggested_order_qty > 0 ? `+${r.suggested_order_qty} ${r.uom}` : 'Optimal'}</td>
           <td class="px-4 py-3.5">
             ${r.alert 
-              ? `<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">Below Minimum</span>` 
-              : `<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Safe Stock</span>`}
+              ? `<span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 font-mono">Below Min</span>` 
+              : `<span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">Safe Stock</span>`}
           </td>
           <td class="px-5 py-3.5 text-right">
             ${r.alert ? `
-              <button onclick="quickOrderReceipt(${r.product_id})" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-2xs">
+              <button onclick="quickOrderReceipt(${r.product_id})" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition active:scale-95">
                 Order Inbound
               </button>
             ` : '-'}
@@ -942,7 +1653,7 @@ function renderLedgerTable(entries) {
   if (!tbody) return;
 
   if (entries.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-slate-400">No ledger entries recorded yet.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="px-5 py-8 text-center text-slate-500 font-mono">No ledger entries recorded yet.</td></tr>`;
     return;
   }
 
@@ -950,17 +1661,17 @@ function renderLedgerTable(entries) {
     const dateStr = new Date(item.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
     const isPositive = item.quantity_change > 0;
     const qtyBadge = isPositive
-      ? `<span class="text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">+${item.quantity_change}</span>`
-      : `<span class="text-xs font-black text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">${item.quantity_change}</span>`;
+      ? `<span class="text-xs font-mono font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">+${item.quantity_change}</span>`
+      : `<span class="text-xs font-mono font-black text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">${item.quantity_change}</span>`;
 
     return `
-      <tr class="hover:bg-slate-50 transition">
-        <td class="px-5 py-3 text-xs text-slate-400 whitespace-nowrap">${dateStr}</td>
-        <td class="px-4 py-3 font-mono font-bold text-xs text-indigo-700">${item.reference || '-'}</td>
-        <td class="px-4 py-3 font-bold text-slate-900">${item.product_name} <span class="text-xs font-normal text-slate-400">(${item.product_sku})</span></td>
-        <td class="px-4 py-3 text-slate-700 font-medium">${item.location_name}</td>
+      <tr class="hover:bg-slate-50/80 transition font-sans">
+        <td class="px-5 py-3 text-xs text-slate-500 whitespace-nowrap font-mono">${dateStr}</td>
+        <td class="px-4 py-3 font-mono font-bold text-xs text-indigo-600">${item.reference || '-'}</td>
+        <td class="px-4 py-3 font-bold text-slate-800">${item.product_name} <span class="text-xs font-normal text-slate-400 font-mono">(${item.product_sku})</span></td>
+        <td class="px-4 py-3 text-slate-600 font-medium">${item.location_name}</td>
         <td class="px-4 py-3">${qtyBadge}</td>
-        <td class="px-4 py-3 font-bold text-slate-800 text-xs">${item.balance_after !== null ? item.balance_after : '-'}</td>
+        <td class="px-4 py-3 font-bold font-mono text-slate-700 text-xs">${item.balance_after !== null ? item.balance_after : '-'}</td>
         <td class="px-5 py-3 text-xs text-slate-500">${item.note || '-'}</td>
       </tr>
     `;
@@ -982,45 +1693,45 @@ function renderWarehousesSettings() {
   if (!container) return;
 
   if (allWarehouses.length === 0) {
-    container.innerHTML = `<p class="text-slate-400">No warehouses configured yet.</p>`;
+    container.innerHTML = `<p class="text-slate-500 font-mono">No warehouses configured yet.</p>`;
     return;
   }
 
   container.innerHTML = allWarehouses.map(wh => {
     const locs = allLocations.filter(l => l.warehouse_id === wh.id);
     const locChips = locs.map(l => `
-      <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+      <div class="flex items-center justify-between p-2.5 bg-slate-50 rounded-xl border border-slate-200">
         <div class="flex items-center gap-2">
           <i data-lucide="map-pin" class="w-4 h-4 text-indigo-600"></i>
           <span class="text-xs font-bold text-slate-800">${l.name}</span>
         </div>
-        <span class="text-[10px] uppercase font-semibold text-slate-400 bg-white px-2 py-0.5 rounded-md border border-slate-200">${l.location_type || 'internal'}</span>
+        <span class="text-[10px] uppercase font-mono font-semibold text-slate-600 bg-white px-2 py-0.5 rounded-md border border-slate-200">${l.location_type || 'internal'}</span>
       </div>
     `).join("");
 
     return `
-      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+      <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between">
         <div>
           <div class="flex items-center justify-between mb-3 border-b border-slate-100 pb-3">
             <div class="flex items-center gap-2.5">
-              <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
+              <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
                 <i data-lucide="warehouse" class="w-5 h-5"></i>
               </div>
               <div>
-                <h3 class="text-base font-bold text-slate-900">${wh.name}</h3>
-                <span class="text-xs text-slate-400 font-mono">${wh.code || 'WH'}</span>
+                <h3 class="text-base font-bold text-slate-900 font-mono">${wh.name}</h3>
+                <span class="text-xs text-slate-500 font-mono">${wh.code || 'WH'}</span>
               </div>
             </div>
-            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">${locs.length} Locations</span>
+            <span class="text-xs font-mono text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">${locs.length} Locations</span>
           </div>
           <p class="text-xs text-slate-500 mb-4">${wh.address || 'Standard Storage Facility'}</p>
 
           <div class="space-y-2 mb-4">
-            <span class="text-xs font-bold text-slate-500 uppercase">Locations under this warehouse:</span>
+            <span class="text-xs font-bold text-slate-500 uppercase font-mono">Locations under this facility:</span>
             ${locChips || '<p class="text-xs text-slate-400">No locations added yet.</p>'}
           </div>
         </div>
-        <button onclick="openAddLocationForWh(${wh.id})" class="w-full py-2 border border-dashed border-slate-300 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition flex items-center justify-center gap-1">
+        <button onclick="openAddLocationForWh(${wh.id})" class="w-full py-2 border border-dashed border-slate-300 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition flex items-center justify-center gap-1">
           <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add Location to this Warehouse
         </button>
       </div>
@@ -1096,9 +1807,9 @@ function renderLowStockAlerts(products) {
 
   if (lowProducts.length === 0) {
     container.innerHTML = `
-      <div class="p-3 bg-emerald-50 rounded-xl border border-emerald-100 text-xs text-emerald-800 flex items-center gap-2">
+      <div class="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
         <i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i>
-        <span>All stock levels are above reorder thresholds.</span>
+        <span>All stock levels are above safety reorder thresholds.</span>
       </div>
     `;
     lucide.createIcons();
@@ -1107,12 +1818,12 @@ function renderLowStockAlerts(products) {
 
   container.innerHTML = lowProducts.map(p => {
     return `
-      <div class="p-2.5 bg-rose-50/70 border border-rose-100 rounded-xl flex items-center justify-between">
+      <div class="p-3 bg-rose-50/80 border border-rose-200 rounded-xl flex items-center justify-between">
         <div>
-          <span class="block text-xs font-bold text-rose-950">${p.name}</span>
-          <span class="text-[11px] text-rose-700">Stock: ${p.total_stock} ${p.uom} (Min: ${p.reorder_point})</span>
+          <span class="block text-xs font-bold text-slate-900 font-sans">${p.name}</span>
+          <span class="text-[11px] text-rose-600 font-mono">Stock: ${p.total_stock} ${p.uom} (Min: ${p.reorder_point})</span>
         </div>
-        <button onclick="quickOrderReceipt(${p.id})" class="px-2 py-1 bg-white text-rose-700 border border-rose-200 hover:bg-rose-100 rounded-lg text-[11px] font-bold shadow-2xs">
+        <button onclick="quickOrderReceipt(${p.id})" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-bold shadow-xs transition active:scale-95 font-mono">
           Replenish
         </button>
       </div>
@@ -1128,7 +1839,6 @@ function renderStockChart() {
   if (!canvas) return;
 
   const labels = allLocations.map(l => l.name);
-  // Calculate quantity per location
   const quantities = allLocations.map(loc => {
     let sum = 0;
     allProducts.forEach(p => {
@@ -1147,9 +1857,9 @@ function renderStockChart() {
     data: {
       labels: labels,
       datasets: [{
-        label: 'Stock Quantity (Units/kg)',
+        label: 'Stock Quantity',
         data: quantities,
-        backgroundColor: '#6366f1',
+        backgroundColor: '#4F46E5',
         borderRadius: 8,
       }]
     },
@@ -1162,98 +1872,134 @@ function renderStockChart() {
       scales: {
         y: {
           beginAtZero: true,
-          grid: { color: '#f1f5f9' },
-          ticks: { font: { family: 'Inter', size: 11 } }
+          grid: { color: '#E2E8F0' },
+          ticks: { font: { family: 'Space Grotesk', size: 11 }, color: '#64748B' }
         },
         x: {
           grid: { display: false },
-          ticks: { font: { family: 'Inter', size: 11 } }
+          ticks: { font: { family: 'Inter', size: 11 }, color: '#64748B' }
         }
       }
     }
   });
 }
 
-// 4-STEP INTERACTIVE PDF FLOW (PDF Pages 3 & 4)
+// 4-STEP INTERACTIVE PDF FLOW (PDF Pages 3 & 4) WITH 3D BABYLON ANIMATION
 async function runPdfDemoWorkflow() {
   const btn = document.getElementById("demoWorkflowBtn");
   btn.disabled = true;
-  btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Running...`;
+  btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> Executing...`;
 
   try {
-    // Find Steel Rods product and Main Store / Production Rack locations
+    if (!allProducts.length || !allLocations.length) {
+      await loadInitialData();
+    }
     const steel = allProducts.find(p => p.sku === "STL-ROD-01") || allProducts[0];
     const mainStore = allLocations.find(l => l.name === "Main Store") || allLocations[0];
     const prodRack = allLocations.find(l => l.name === "Production Rack") || allLocations[1];
 
+    if (!steel || !mainStore || !prodRack) {
+      throw new Error("Required demo inventory records not found. Please click 'Reset Demo State' first.");
+    }
+
+    // Camera preset to overview
+    if (window.warehouse3D) {
+      window.warehouse3D.setCameraPreset("overview");
+    }
+
     // Step 1: Receive 100 kg Steel from Vendor -> Stock: +100
-    showToast("Step 1: Receiving 100 kg Steel Rods from Tata Steel (+100)...", "info");
-    await fetch("/operations/receipt", {
+    showToast("Step 1 (PDF Flow): Receiving 100 kg Steel from Vendor (+100)...", "info");
+    if (window.warehouse3D) {
+      window.warehouse3D.animateTransfer("Inbound Dock", "Main Store", 100, "Steel Rods");
+    }
+    const res1 = await fetch("/operations/receipt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         supplier_name: "Tata Steel Ltd (PDF Step 1)",
         dest_location_id: mainStore.id,
-        notes: "PDF Flow: Receive 100 kg Steel from Vendor",
+        notes: "PDF Flow Step 1: Receive 100 kg Steel from Vendor",
         validate_immediately: true,
         items: [{ product_id: steel.id, quantity: 100.0, dest_location_id: mainStore.id }]
       })
     });
+    if (!res1.ok) {
+      const err = await res1.json();
+      throw new Error(`Step 1 failed: ${err.detail || 'Receipt failed'}`);
+    }
 
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 1200));
 
     // Step 2: Internal Transfer: Main Store -> Production Rack (25 kg)
-    showToast("Step 2: Internal Transfer: Main Store → Production Rack...", "info");
-    await fetch("/operations/transfer", {
+    showToast("Step 2 (PDF Flow): Moving to production rack: Main Store → Production Rack (25 kg)...", "info");
+    if (window.warehouse3D) {
+      window.warehouse3D.animateTransfer("Main Store", "Production Rack", 25, "Steel Rods");
+    }
+    const res2 = await fetch("/operations/transfer", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         source_location_id: mainStore.id,
         dest_location_id: prodRack.id,
-        notes: "PDF Flow: Move to production rack",
+        notes: "PDF Flow Step 2: Move to production rack (Main Store -> Production Rack)",
         validate_immediately: true,
         items: [{ product_id: steel.id, quantity: 25.0, source_location_id: mainStore.id, dest_location_id: prodRack.id }]
       })
     });
+    if (!res2.ok) {
+      const err = await res2.json();
+      throw new Error(`Step 2 failed: ${err.detail || 'Transfer failed'}`);
+    }
 
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 1200));
 
     // Step 3: Deliver finished goods: Deliver 20 steel (-20)
-    showToast("Step 3: Delivering 20 steel to Customer (-20)...", "info");
-    await fetch("/operations/delivery", {
+    showToast("Step 3 (PDF Flow): Delivering finished goods to customer: Deliver 20 steel (-20)...", "info");
+    if (window.warehouse3D) {
+      window.warehouse3D.animateTransfer("Production Rack", "Outbound Dock", 20, "Finished Goods");
+    }
+    const res3 = await fetch("/operations/delivery", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         customer_name: "Apex Engineering (PDF Step 3)",
         source_location_id: prodRack.id,
-        notes: "PDF Flow: Deliver finished goods",
+        notes: "PDF Flow Step 3: Deliver finished goods (Deliver 20 steel)",
         validate_immediately: true,
         items: [{ product_id: steel.id, quantity: 20.0, source_location_id: prodRack.id }]
       })
     });
+    if (!res3.ok) {
+      const err = await res3.json();
+      throw new Error(`Step 3 failed: ${err.detail || 'Delivery failed'}`);
+    }
 
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 1200));
 
     // Step 4: Adjust damaged items: 3 kg steel damaged (-3)
-    showToast("Step 4: Adjusting 3 kg damaged steel items...", "info");
-    // Get current stock at prodRack for steel
+    showToast("Step 4 (PDF Flow): Adjusting damaged items: 3 kg steel damaged (-3)...", "info");
     const prodRes = await fetch(`/products/${steel.id}`);
     const steelDetail = await prodRes.json();
-    const curQuant = steelDetail.quants.find(q => q.location_id === prodRack.id);
-    const counted = Math.max(0, (curQuant ? curQuant.quantity : 5.0) - 3.0);
+    const curQuant = steelDetail.quants ? steelDetail.quants.find(q => q.location_id === prodRack.id) : null;
+    const currentAtRack = curQuant ? curQuant.quantity : 5.0;
+    const counted = Math.max(0, currentAtRack - 3.0);
 
-    await fetch("/operations/adjustment", {
+    const res4 = await fetch("/operations/adjustment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         product_id: steel.id,
         location_id: prodRack.id,
         counted_quantity: counted,
-        notes: "PDF Flow: 3 kg steel damaged"
+        notes: "PDF Flow Step 4: 3 kg steel damaged"
       })
     });
+    if (!res4.ok) {
+      const err = await res4.json();
+      throw new Error(`Step 4 failed: ${err.detail || 'Adjustment failed'}`);
+    }
 
-    showToast("Completed all 4 PDF steps! Opening Move History...", "success");
+    showToast("Completed all 4 steps from StockSense.pdf! Redirecting to Move History...", "success");
     await loadInitialData();
     navigateTo("ledger");
   } catch (err) {
@@ -1265,30 +2011,504 @@ async function runPdfDemoWorkflow() {
   }
 }
 
+// --- MANAGER STOCK PIPELINE WORKSPACE ---
+async function renderManagerStockCenter() {
+  const inContainer = document.getElementById("managerInboundList");
+  const outContainer = document.getElementById("managerOutboundList");
+  const inCount = document.getElementById("managerInboundCount");
+  const outCount = document.getElementById("managerOutboundCount");
+  if (!inContainer || !outContainer) return;
+
+  try {
+    const res = await fetch("/operations/documents?limit=50");
+    const docs = await res.json();
+    
+    // Inbound receipts (status != done, != canceled)
+    const pendingReceipts = docs.filter(d => d.doc_type === "receipt" && d.status !== "done" && d.status !== "canceled");
+    // Outbound deliveries (status != done, != canceled)
+    const pendingDeliveries = docs.filter(d => d.doc_type === "delivery" && d.status !== "done" && d.status !== "canceled");
+
+    if (inCount) inCount.textContent = `${pendingReceipts.length} receipts awaiting receiving`;
+    if (outCount) outCount.textContent = `${pendingDeliveries.length} deliveries awaiting dispatch`;
+
+    // Render Inbound Receipts
+    if (pendingReceipts.length === 0) {
+      inContainer.innerHTML = `
+        <div class="p-3 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+          <i data-lucide="check-circle" class="w-4 h-4 mx-auto mb-1 text-emerald-500"></i>
+          All supplier receipts received and validated!
+        </div>`;
+    } else {
+      inContainer.innerHTML = pendingReceipts.slice(0, 5).map(d => {
+        const itemText = d.lines && d.lines.length > 0 ? `${d.lines[0].quantity} × ${d.lines[0].product_name || 'Units'}` : 'Items';
+        return `
+          <div class="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-emerald-50/50 rounded-xl border border-slate-100 transition">
+            <div class="space-y-0.5">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-bold text-slate-900 font-mono">${d.reference}</span>
+                <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-emerald-100 text-emerald-800">${d.partner_name || 'Supplier'}</span>
+              </div>
+              <p class="text-[11px] text-slate-500">${itemText}</p>
+            </div>
+            <button onclick="handleValidateDocument(${d.id})" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1">
+              <i data-lucide="check" class="w-3 h-3"></i> Receive
+            </button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // Render Outbound Deliveries
+    if (pendingDeliveries.length === 0) {
+      outContainer.innerHTML = `
+        <div class="p-3 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
+          <i data-lucide="check-circle" class="w-4 h-4 mx-auto mb-1 text-blue-500"></i>
+          All customer orders packed and dispatched!
+        </div>`;
+    } else {
+      outContainer.innerHTML = pendingDeliveries.slice(0, 5).map(d => {
+        const itemText = d.lines && d.lines.length > 0 ? `${d.lines[0].quantity} × ${d.lines[0].product_name || 'Units'}` : 'Items';
+        return `
+          <div class="flex items-center justify-between p-2.5 bg-slate-50 hover:bg-blue-50/50 rounded-xl border border-slate-100 transition">
+            <div class="space-y-0.5">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs font-bold text-slate-900 font-mono">${d.reference}</span>
+                <span class="text-[10px] px-1.5 py-0.2 rounded font-semibold bg-blue-100 text-blue-800">${d.partner_name || 'Customer'}</span>
+              </div>
+              <p class="text-[11px] text-slate-500">${itemText}</p>
+            </div>
+            <button onclick="handleValidateDocument(${d.id})" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1">
+              <i data-lucide="truck" class="w-3 h-3"></i> Dispatch
+            </button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    lucide.createIcons();
+  } catch (err) {
+    console.error("renderManagerStockCenter error:", err);
+  }
+}
+
+// --- WAREHOUSE STAFF OPERATIONAL HUB ---
+let currentStaffTab = "picking";
+let staffTasksCache = null;
+
+async function loadStaffTasks() {
+  try {
+    const res = await fetch("/operations/staff/tasks");
+    const data = await res.json();
+    staffTasksCache = data;
+
+    // Update KPI indicators
+    const kPicks = document.getElementById("staffKpiPicks");
+    const kShelves = document.getElementById("staffKpiShelves");
+    const kTransfers = document.getElementById("staffKpiTransfers");
+    const kCounts = document.getElementById("staffKpiCounts");
+    if (kPicks) kPicks.textContent = data.metrics.pending_picking;
+    if (kShelves) kShelves.textContent = data.metrics.pending_shelving;
+    if (kTransfers) kTransfers.textContent = data.metrics.pending_transfers;
+    if (kCounts) kCounts.textContent = data.metrics.pending_counts;
+
+    // Update sidebar badges
+    const bPick = document.getElementById("staffNavPickBadge");
+    const bShelve = document.getElementById("staffNavShelveBadge");
+    const bTra = document.getElementById("staffNavTransferBadge");
+    if (bPick) bPick.textContent = data.metrics.pending_picking;
+    if (bShelve) bShelve.textContent = data.metrics.pending_shelving;
+    if (bTra) bTra.textContent = data.metrics.pending_transfers;
+
+    // Render Workbenches
+    renderStaffPicking(data.picking_tasks);
+    renderStaffShelving(data.shelving_tasks);
+    renderStaffTransfers(data.transfer_tasks);
+    renderStaffCounting(data.counting_tasks);
+    populateStaffTransferDropdowns();
+
+    lucide.createIcons();
+  } catch (err) {
+    console.error("loadStaffTasks error:", err);
+  }
+}
+
+function switchStaffWorkbenchTab(tab) {
+  currentStaffTab = tab;
+  const tabs = ["picking", "shelving", "transfers", "counting"];
+  
+  tabs.forEach(t => {
+    const panel = document.getElementById(`staffPanel-${t}`);
+    const btn = document.getElementById(`staffTabBtn-${t}`);
+    if (panel) {
+      if (t === tab) panel.classList.remove("hidden");
+      else panel.classList.add("hidden");
+    }
+    if (btn) {
+      if (t === tab) {
+        btn.className = "px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 bg-white text-indigo-700 shadow-xs border border-indigo-100";
+      } else {
+        btn.className = "px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition flex items-center gap-2";
+      }
+    }
+  });
+
+  lucide.createIcons();
+}
+
+function renderStaffPicking(tasks) {
+  const tbody = document.getElementById("staffPickingTableBody");
+  if (!tbody) return;
+
+  if (!tasks || tasks.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="px-5 py-8 text-center text-slate-400 font-mono text-xs">
+          <i data-lucide="check-circle" class="w-7 h-7 mx-auto mb-2 text-emerald-500"></i>
+          All customer orders picked and packed! No pending picks.
+        </td>
+      </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(t => `
+    <tr class="hover:bg-slate-50 transition">
+      <td class="px-4 py-3 font-mono font-bold text-indigo-600 text-xs">${t.reference}</td>
+      <td class="px-4 py-3 font-semibold text-slate-800 text-xs">${t.customer}</td>
+      <td class="px-4 py-3 text-xs">
+        <span class="font-bold text-slate-900">${t.product_name}</span>
+        <span class="text-[10px] text-slate-400 font-mono block">${t.sku}</span>
+      </td>
+      <td class="px-4 py-3 font-mono font-bold text-slate-900 text-xs">${t.quantity} ${t.uom}</td>
+      <td class="px-4 py-3">
+        <span class="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-xs font-bold font-mono">
+          📍 ${t.source_location}
+        </span>
+      </td>
+      <td class="px-4 py-3">
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 uppercase">${t.status}</span>
+      </td>
+      <td class="px-4 py-3 text-right">
+        <button onclick="staffPickItem(${t.document_id}, '${t.product_name}')" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1.5 ml-auto">
+          <i data-lucide="check-square" class="w-3.5 h-3.5"></i> Confirm Pick
+        </button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function renderStaffShelving(tasks) {
+  const tbody = document.getElementById("staffShelvingTableBody");
+  if (!tbody) return;
+
+  if (!tasks || tasks.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="px-5 py-8 text-center text-slate-400 font-mono text-xs">
+          <i data-lucide="check-circle" class="w-7 h-7 mx-auto mb-2 text-blue-500"></i>
+          Dock is clear! All arriving goods have been placed onto racks.
+        </td>
+      </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tasks.map((t, idx) => {
+    const locOptions = allLocations.map(l => 
+      `<option value="${l.id}" ${l.id === t.dest_location_id ? 'selected' : ''}>${l.name} (${l.warehouse ? l.warehouse.name : 'Warehouse'})</option>`
+    ).join("");
+
+    return `
+      <tr class="hover:bg-slate-50 transition">
+        <td class="px-4 py-3 font-mono font-bold text-indigo-600 text-xs">${t.reference}</td>
+        <td class="px-4 py-3 font-semibold text-slate-800 text-xs">${t.supplier}</td>
+        <td class="px-4 py-3 text-xs">
+          <span class="font-bold text-slate-900">${t.product_name}</span>
+          <span class="text-[10px] text-slate-400 font-mono block">${t.sku}</span>
+        </td>
+        <td class="px-4 py-3 font-mono font-bold text-slate-900 text-xs">${t.quantity} ${t.uom}</td>
+        <td class="px-4 py-3">
+          <span class="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-mono font-medium">
+            ⚓ ${t.from_dock}
+          </span>
+        </td>
+        <td class="px-4 py-3">
+          <select id="staffShelveLocSelect_${idx}" class="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-600 text-slate-800">
+            ${locOptions}
+          </select>
+        </td>
+        <td class="px-4 py-3 text-right">
+          <button onclick="staffShelveItem(${t.product_id}, ${t.quantity}, 'staffShelveLocSelect_${idx}', '${t.product_name}')" class="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1.5 ml-auto">
+            <i data-lucide="archive" class="w-3.5 h-3.5"></i> Put Away
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderStaffTransfers(tasks) {
+  const tbody = document.getElementById("staffTransfersTableBody");
+  if (!tbody) return;
+
+  if (!tasks || tasks.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="px-5 py-8 text-center text-slate-400 font-mono text-xs">
+          <i data-lucide="check-circle" class="w-7 h-7 mx-auto mb-2 text-amber-500"></i>
+          No scheduled moves in queue. Use the quick form above to perform an inter-rack transfer.
+        </td>
+      </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(t => `
+    <tr class="hover:bg-slate-50 transition">
+      <td class="px-4 py-3 font-mono font-bold text-amber-700 text-xs">${t.reference}</td>
+      <td class="px-4 py-3 text-xs">
+        <span class="font-bold text-slate-900">${t.product_name}</span>
+        <span class="text-[10px] text-slate-400 font-mono block">${t.sku}</span>
+      </td>
+      <td class="px-4 py-3 font-mono font-bold text-slate-900 text-xs">${t.quantity} ${t.uom}</td>
+      <td class="px-4 py-3">
+        <span class="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-mono font-bold">
+          ${t.from_location} ➔ ${t.to_location}
+        </span>
+      </td>
+      <td class="px-4 py-3">
+        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 uppercase">${t.status}</span>
+      </td>
+      <td class="px-4 py-3 text-right">
+        <button onclick="staffExecuteTransfer(${t.document_id}, '${t.product_name}')" class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1.5 ml-auto">
+          <i data-lucide="play" class="w-3.5 h-3.5"></i> Move Stock
+        </button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function renderStaffCounting(tasks) {
+  const tbody = document.getElementById("staffCountingTableBody");
+  if (!tbody) return;
+
+  if (!tasks || tasks.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400 text-xs">No counting items loaded.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = tasks.map(t => {
+    const prod = allProducts.find(p => p.id === t.product_id);
+    const locNames = prod && prod.quants && prod.quants.length > 0 
+      ? prod.quants.map(q => q.location_name || 'Store').join(", ")
+      : "Main Store";
+
+    const defaultLocId = prod && prod.quants && prod.quants.length > 0 
+      ? prod.quants[0].location_id 
+      : (allLocations[0] ? allLocations[0].id : 1);
+
+    return `
+      <tr class="hover:bg-slate-50 transition">
+        <td class="px-4 py-3 text-xs">
+          <span class="font-bold text-slate-900">${t.product_name}</span>
+          <span class="text-[10px] text-slate-400 font-mono block">${t.sku}</span>
+        </td>
+        <td class="px-4 py-3 text-xs text-slate-600 font-mono">${locNames}</td>
+        <td class="px-4 py-3 font-mono font-bold text-slate-800 text-xs">
+          ${t.recorded_stock} <span class="text-[11px] font-normal text-slate-500">${t.uom}</span>
+        </td>
+        <td class="px-4 py-3">
+          <input type="number" id="staffCountInput_${t.product_id}" step="any" min="0" value="${t.recorded_stock}" 
+                 oninput="updateCountDelta(${t.recorded_stock}, this, 'staffCountDelta_${t.product_id}')"
+                 class="w-24 text-center font-mono font-bold text-sm bg-slate-50 border border-slate-300 rounded-xl px-2 py-1 outline-none focus:border-indigo-600 text-slate-900">
+        </td>
+        <td class="px-4 py-3">
+          <span id="staffCountDelta_${t.product_id}" class="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+            0.00 delta (Matched)
+          </span>
+        </td>
+        <td class="px-4 py-3 text-right">
+          <button onclick="staffSubmitCount(${t.product_id}, ${defaultLocId}, 'staffCountInput_${t.product_id}', '${t.product_name}')" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-xs transition active:scale-95 flex items-center gap-1.5 ml-auto">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i> Submit Count
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function updateCountDelta(recorded, inputEl, badgeId) {
+  const badge = document.getElementById(badgeId);
+  if (!badge) return;
+  const counted = parseFloat(inputEl.value);
+  if (isNaN(counted)) {
+    badge.textContent = "Invalid";
+    badge.className = "text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500";
+    return;
+  }
+  const delta = counted - recorded;
+  if (Math.abs(delta) < 0.0001) {
+    badge.textContent = "0.00 delta (Matched)";
+    badge.className = "text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600";
+  } else if (delta > 0) {
+    badge.textContent = `+${delta.toFixed(2)} (Surplus)`;
+    badge.className = "text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200";
+  } else {
+    badge.textContent = `${delta.toFixed(2)} (Deficit)`;
+    badge.className = "text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200";
+  }
+}
+
+function populateStaffTransferDropdowns() {
+  const pSel = document.getElementById("staffTraProduct");
+  const sSel = document.getElementById("staffTraSource");
+  const dSel = document.getElementById("staffTraDest");
+  if (!pSel || !sSel || !dSel) return;
+
+  pSel.innerHTML = allProducts.map(p => `<option value="${p.id}">${p.name} (${p.sku})</option>`).join("");
+  sSel.innerHTML = allLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join("");
+  dSel.innerHTML = allLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join("");
+  if (allLocations.length > 1) dSel.selectedIndex = 1;
+}
+
+// Staff Action Executions
+async function staffPickItem(docId, prodName) {
+  try {
+    const res = await fetch("/operations/staff/pick", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_id: docId, notes: "Picked & packed from shelf by staff" })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Picking failed");
+
+    showToast(`Order #${docId} (${prodName || 'goods'}) picked and packed successfully!`, "success");
+    await loadInitialData();
+    await loadStaffTasks();
+    if (window.warehouse3D) window.warehouse3D.playFlowStep(3);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function staffShelveItem(prodId, qty, selectId, prodName) {
+  const sel = document.getElementById(selectId);
+  const destId = sel ? parseInt(sel.value) : 1;
+
+  try {
+    const res = await fetch("/operations/staff/shelve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ product_id: prodId, quantity: qty, dest_location_id: destId })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Shelving failed");
+
+    showToast(`Shelved ${qty} units of ${prodName || 'product'} to target rack!`, "success");
+    await loadInitialData();
+    await loadStaffTasks();
+    if (window.warehouse3D) window.warehouse3D.playFlowStep(2);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function staffExecuteTransfer(docId, prodName) {
+  try {
+    const res = await fetch(`/operations/staff/transfer-doc/${docId}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Transfer execution failed");
+
+    showToast(`Internal transfer executed for ${prodName || 'goods'}!`, "success");
+    await loadInitialData();
+    await loadStaffTasks();
+    if (window.warehouse3D) window.warehouse3D.playFlowStep(2);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function handleStaffQuickTransfer(e) {
+  if (e) e.preventDefault();
+  const product_id = parseInt(document.getElementById("staffTraProduct").value);
+  const source_location_id = parseInt(document.getElementById("staffTraSource").value);
+  const dest_location_id = parseInt(document.getElementById("staffTraDest").value);
+  const quantity = parseFloat(document.getElementById("staffTraQty").value);
+
+  if (source_location_id === dest_location_id) {
+    return showToast("Source and destination rack must be different!", "error");
+  }
+
+  try {
+    const res = await fetch("/operations/staff/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ product_id, source_location_id, dest_location_id, quantity, notes: "Ground move by warehouse staff" })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Quick transfer failed");
+
+    showToast(`Moved ${quantity} units between racks successfully!`, "success");
+    document.getElementById("staffTraQty").value = "";
+    await loadInitialData();
+    await loadStaffTasks();
+    if (window.warehouse3D) window.warehouse3D.playFlowStep(2);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
+async function staffSubmitCount(prodId, locId, inputId, prodName) {
+  const inputEl = document.getElementById(inputId);
+  if (!inputEl) return;
+  const counted_quantity = parseFloat(inputEl.value);
+
+  if (isNaN(counted_quantity) || counted_quantity < 0) {
+    return showToast("Please input a valid counted quantity", "error");
+  }
+
+  try {
+    const res = await fetch("/operations/staff/count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ product_id: prodId, location_id: locId, counted_quantity, notes: "Physical count verified by staff" })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Count submission failed");
+
+    showToast(`Physical count submitted for ${prodName || 'item'}! Stock adjusted in PostgreSQL.`, "success");
+    await loadInitialData();
+    await loadStaffTasks();
+    if (window.warehouse3D) window.warehouse3D.playFlowStep(4);
+  } catch (err) {
+    showToast(err.message, "error");
+  }
+}
+
 // Refresh Current Active View Data
 function refreshCurrentViewData() {
   if (currentView === "dashboard") {
     loadDashboardData();
+    renderManagerStockCenter();
   } else if (currentView === "products") {
     switchProductTab(currentProductSubTab);
   } else if (["receipts", "deliveries", "transfers", "adjustments"].includes(currentView)) {
     loadSingleOperationsView(currentView);
   } else if (currentView === "ledger") {
     loadLedgerData();
+  } else if (currentView === "staff") {
+    loadStaffTasks();
   }
 }
 
-// Toast System
+// Toast System (with Motion spring bounce)
 function showToast(message, type = "info") {
   const container = document.getElementById("toastContainer");
   if (!container) return;
 
   const toast = document.createElement("div");
   const bg = type === "success" 
-    ? "bg-emerald-600 text-white" 
-    : (type === "error" ? "bg-rose-600 text-white" : "bg-slate-900 text-white");
+    ? "bg-white text-emerald-800 border border-emerald-200" 
+    : (type === "error" ? "bg-white text-rose-800 border border-rose-200" : "bg-white text-slate-800 border border-slate-200");
 
-  toast.className = `${bg} px-4 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transform transition-all duration-300 translate-y-2 opacity-0 pointer-events-auto`;
+  toast.className = `${bg} backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl text-xs sm:text-sm font-semibold flex items-center gap-2.5 pointer-events-auto font-sans`;
   toast.innerHTML = `
     <i data-lucide="${type === 'success' ? 'check-circle' : (type === 'error' ? 'alert-circle' : 'info')}" class="w-4 h-4 shrink-0"></i>
     <span>${message}</span>
@@ -1297,24 +2517,41 @@ function showToast(message, type = "info") {
   container.appendChild(toast);
   lucide.createIcons();
 
-  requestAnimationFrame(() => {
-    toast.classList.remove("translate-y-2", "opacity-0");
-  });
+  if (window.Motion) {
+    Motion.animate(toast, { opacity: [0, 1], y: [16, 0], scale: [0.95, 1] }, { duration: 0.35, easing: "ease-out" });
+  }
 
   setTimeout(() => {
-    toast.classList.add("opacity-0", "translate-x-4");
-    setTimeout(() => toast.remove(), 300);
+    if (window.Motion) {
+      Motion.animate(toast, { opacity: [1, 0], x: [0, 40] }, { duration: 0.3 }).finished.then(() => toast.remove());
+    } else {
+      toast.remove();
+    }
   }, 4000);
 }
 
-// Modal Helpers
+// Modal Helpers (with Motion spring physics)
 function openModal(id) {
   const m = document.getElementById(id);
-  if (m) m.classList.remove("hidden");
+  if (!m) return;
+  m.classList.remove("hidden");
+  
+  const content = m.querySelector(".modal-content") || m.children[0];
+  if (content && window.Motion) {
+    Motion.animate(content, { scale: [0.92, 1], opacity: [0, 1], y: [15, 0] }, { duration: 0.28, easing: "ease-out" });
+  }
   lucide.createIcons();
 }
 
 function closeModal(id) {
   const m = document.getElementById(id);
-  if (m) m.classList.add("hidden");
+  if (!m) return;
+  const content = m.querySelector(".modal-content") || m.children[0];
+  if (content && window.Motion) {
+    Motion.animate(content, { scale: [1, 0.94], opacity: [1, 0], y: [0, 10] }, { duration: 0.2 }).finished.then(() => {
+      m.classList.add("hidden");
+    });
+  } else {
+    m.classList.add("hidden");
+  }
 }

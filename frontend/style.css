@@ -1,0 +1,106 @@
+/* StockSense - Clean Architectural Light Theme & 3D Process Flow Styles */
+
+:root {
+  --bg-primary: #F8FAFC;
+  --card-bg: rgba(255, 255, 255, 0.92);
+  --card-border: rgba(226, 232, 240, 0.95);
+  --text-main: #0F172A;
+  --text-muted: #64748B;
+  --brand-indigo: #4F46E5;
+  --brand-purple: #714B67;
+  --flow-green: #10B981;
+  --flow-amber: #F59E0B;
+  --flow-blue: #0284C7;
+  --flow-rose: #EF4444;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Crisp Light Glassmorphism */
+.glass-panel-light {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(226, 232, 240, 0.85);
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.05);
+}
+
+.glass-hud-light {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(203, 213, 225, 0.8);
+  box-shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.12);
+}
+
+/* Subtle Architectural Grid Background */
+.light-architectural-grid {
+  background-color: #F8FAFC;
+  background-image: 
+    linear-gradient(to right, rgba(226, 232, 240, 0.7) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(226, 232, 240, 0.7) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* Custom 3D Canvas element */
+#babylonCanvas {
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+  display: block;
+  cursor: grab;
+}
+
+#babylonCanvas:active {
+  cursor: grabbing;
+}
+
+/* Flow Step Indicator Buttons */
+.flow-step-btn {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.flow-step-btn.active {
+  background: #4F46E5;
+  color: #FFFFFF;
+  border-color: #4F46E5;
+  box-shadow: 0 4px 14px -2px rgba(79, 70, 229, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Pulse beacon animation */
+@keyframes beacon-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+.animate-beacon {
+  animation: beacon-pulse 2s infinite ease-in-out;
+}
+
+/* Scrollbar customization */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}

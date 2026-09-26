@@ -202,3 +202,52 @@ class OTPResetPasswordRequest(BaseModel):
     email: EmailStr
     code: str
     new_password: str
+
+# --- Google Login & Password Change ---
+class GoogleLoginRequest(BaseModel):
+    email: EmailStr
+    name: Optional[str] = "Google User"
+    role: Optional[RoleEnum] = RoleEnum.staff
+    google_id: Optional[str] = None
+
+class ChangePasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+# --- Staff Operational Workbench Schemas ---
+class StaffShelveRequest(BaseModel):
+    product_id: int
+    quantity: float = Field(..., gt=0)
+    dest_location_id: int
+    notes: Optional[str] = "Shelved to rack by warehouse staff"
+
+class StaffPickRequest(BaseModel):
+    document_id: int
+    notes: Optional[str] = "Picked and packed by warehouse staff"
+
+class StaffCountRequest(BaseModel):
+    product_id: int
+    location_id: int
+    counted_quantity: float
+    notes: Optional[str] = "Physical count entered by warehouse staff"
+
+class StaffTransferRequest(BaseModel):
+    product_id: int
+    quantity: float = Field(..., gt=0)
+    source_location_id: int
+    dest_location_id: int
+    notes: Optional[str] = "Inter-rack transfer executed by warehouse staff"
+
+class StaffTaskItem(BaseModel):
+    id: int
+    type: str # 'shelve', 'pick', 'transfer', 'count'
+    title: str
+    description: str
+    quantity: float
+    uom: str
+    location_from: Optional[str] = None
+    location_to: Optional[str] = None
+    document_reference: Optional[str] = None
+    status: str
+

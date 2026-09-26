@@ -303,6 +303,13 @@ async def validate_document(db: AsyncSession, doc_id: int) -> models.Document:
                 note=f"Validated Receipt from {doc.partner_name or 'Supplier'}"
             )
             db.add(ledger)
+            await event_manager.publish_stock_update(
+                product_id=line.product_id,
+                location_id=dest_loc,
+                new_quantity=quant.quantity,
+                change=line.quantity,
+                trigger="receipt"
+            )
         elif doc.doc_type == models.DocumentTypeEnum.delivery:
             src_loc = line.source_location_id or doc.source_location_id
             quant = await get_or_create_quant(db, line.product_id, src_loc)
@@ -319,6 +326,13 @@ async def validate_document(db: AsyncSession, doc_id: int) -> models.Document:
                 note=f"Validated Delivery to {doc.partner_name or 'Customer'}"
             )
             db.add(ledger)
+            await event_manager.publish_stock_update(
+                product_id=line.product_id,
+                location_id=src_loc,
+                new_quantity=quant.quantity,
+                change=-line.quantity,
+                trigger="delivery"
+            )
         elif doc.doc_type == models.DocumentTypeEnum.transfer:
             src_loc = line.source_location_id or doc.source_location_id
             dst_loc = line.dest_location_id or doc.dest_location_id
@@ -349,11 +363,24 @@ async def validate_document(db: AsyncSession, doc_id: int) -> models.Document:
             )
             db.add(ledger_src)
             db.add(ledger_dst)
+            await event_manager.publish_stock_update(
+                product_id=line.product_id,
+                location_id=src_loc,
+                new_quantity=quant_src.quantity,
+                change=-line.quantity,
+                trigger="transfer_out"
+            )
+            await event_manager.publish_stock_update(
+                product_id=line.product_id,
+                location_id=dst_loc,
+                new_quantity=quant_dst.quantity,
+                change=line.quantity,
+                trigger="transfer_in"
+            )
 
     doc.status = models.DocumentStatusEnum.done
     await db.commit()
-    await db.refresh(doc)
-    return doc
+    return await get_document_by_id(db, doc.id)
 
 # Document getters & queries
 async def get_document_by_id(db: AsyncSession, doc_id: int) -> Optional[models.Document]:
@@ -400,8 +427,21 @@ async def list_documents(
     if location_id:
         conditions.append(or_(
             models.Document.source_location_id == location_id,
-            models.Document.dest_location_id == location_id
+            models.Document.dest_location_id == location_id,
+            models.Document.lines.any(models.DocumentLine.source_location_id == location_id),
+            models.Document.lines.any(models.DocumentLine.dest_location_id == location_id)
         ))
+    if warehouse_id:
+        conditions.append(or_(
+            models.Document.source_location.has(models.Location.warehouse_id == warehouse_id),
+            models.Document.dest_location.has(models.Location.warehouse_id == warehouse_id),
+            models.Document.lines.any(models.DocumentLine.source_location.has(models.Location.warehouse_id == warehouse_id)),
+            models.Document.lines.any(models.DocumentLine.dest_location.has(models.Location.warehouse_id == warehouse_id))
+        ))
+    if category and category.lower() != "all":
+        conditions.append(
+            models.Document.lines.any(models.DocumentLine.product.has(models.Product.category == category))
+        )
     if search:
         s = f"%{search}%"
         conditions.append(or_(

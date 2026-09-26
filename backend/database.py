@@ -3,8 +3,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Use SQLite for local dev if Postgres isn't set up yet, but production will be Postgres 16
-# Format for asyncpg: postgresql+asyncpg://user:password@localhost/dbname
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/stocksense")
+# Default PostgreSQL 18 connection url
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/stocksense")
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
