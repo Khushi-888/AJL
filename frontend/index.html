@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StockSense - Modular Inventory Management System</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            brand: {
+              50: '#f5f3ff',
+              100: '#ede9fe',
+              500: '#8b5cf6',
+              600: '#7c3aed',
+              700: '#6d28d9',
+              800: '#5b21b6',
+              900: '#4c1d95',
+            },
+            odoo: {
+              purple: '#714B67',
+              darkPurple: '#4A2A43',
+              teal: '#00A09D',
+              coral: '#E25B5B',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col selection:bg-brand-500 selection:text-white">
+
+  <!-- Mobile Backdrop -->
+  <div id="mobileBackdrop" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-30 hidden transition-opacity lg:hidden" onclick="toggleSidebar()"></div>
+
+  <!-- Top Navbar -->
+  <header class="sticky top-0 z-20 bg-white border-b border-slate-200 shadow-xs h-16 flex items-center justify-between px-4 sm:px-6">
+    <div class="flex items-center gap-3">
+      <!-- Mobile hamburger toggle -->
+      <button onclick="toggleSidebar()" class="lg:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100 focus:outline-none" aria-label="Toggle menu">
+        <i data-lucide="menu" class="w-6 h-6"></i>
+      </button>
+
+      <!-- Logo & Title -->
+      <div class="flex items-center gap-2.5 cursor-pointer" onclick="navigateTo('dashboard')">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-200">
+          <i data-lucide="boxes" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <span class="text-xl font-bold tracking-tight text-slate-900">Stock<span class="text-indigo-600">Sense</span></span>
+          <span class="hidden sm:inline-block ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">Odoo IMS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Search Bar (Responsive) -->
+    <div class="hidden md:flex items-center relative max-w-md w-full mx-6">
+      <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none"></i>
+      <input type="text" id="globalSearchInput" placeholder="Quick search SKU, product name, or reference..." 
+             onkeyup="handleGlobalSearch(event)"
+             class="w-full pl-10 pr-4 py-2 text-sm bg-slate-100 border border-transparent rounded-xl focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all outline-none">
+    </div>
+
+    <!-- Right Top Actions & Profile -->
+    <div class="flex items-center gap-2 sm:gap-4">
+      <!-- WebSocket Live Status -->
+      <div id="wsStatusBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200" title="Connected to PostgreSQL Real-Time Broker">
+        <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span class="hidden sm:inline">Live Sync</span>
+      </div>
+
+      <!-- Quick Action Button -->
+      <div class="relative">
+        <button onclick="toggleQuickActions()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold shadow-sm transition">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">New Operation</span>
+        </button>
+        <!-- Dropdown Menu -->
+        <div id="quickActionsDropdown" class="hidden absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-lg border border-slate-100 py-1.5 z-50">
+          <button onclick="openModal('receiptModal'); toggleQuickActions()" class="w-full text-left px-4 py-2 text-xs sm:text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+            <i data-lucide="arrow-down-left" class="w-4 h-4 text-emerald-600"></i> New Receipt (Incoming)
+          </button>
+          <button onclick="openModal('deliveryModal'); toggleQuickActions()" class="w-full text-left px-4 py-2 text-xs sm:text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+            <i data-lucide="arrow-up-right" class="w-4 h-4 text-blue-600"></i> New Delivery (Outgoing)
+          </button>
+          <button onclick="openModal('transferModal'); toggleQuickActions()" class="w-full text-left px-4 py-2 text-xs sm:text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2">
+            <i data-lucide="repeat" class="w-4 h-4 text-amber-600"></i> Internal Transfer
+          </button>
+          <button onclick="openModal('adjustmentModal'); toggleQuickActions()" class="w-full text-left px-4 py-2 text-xs sm:text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 border-t border-slate-100">
+            <i data-lucide="sliders" class="w-4 h-4 text-purple-600"></i> Stock Adjustment
+          </button>
+          <button onclick="openModal('productModal'); toggleQuickActions()" class="w-full text-left px-4 py-2 text-xs sm:text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 border-t border-slate-100">
+            <i data-lucide="package-plus" class="w-4 h-4 text-indigo-600"></i> Create Product
+          </button>
+        </div>
+      </div>
+
+      <!-- Current User Profile Chip -->
+      <div class="flex items-center gap-2 pl-2 border-l border-slate-200">
+        <button onclick="openModal('profileModal')" class="flex items-center gap-2 text-left p-1 rounded-lg hover:bg-slate-100 transition">
+          <div id="userAvatar" class="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs border border-indigo-200">
+            KS
+          </div>
+          <div class="hidden md:block">
+            <div id="headerUserName" class="text-xs font-semibold text-slate-900 leading-tight">Khushi Saharan</div>
+            <div id="headerUserRole" class="text-[10px] text-indigo-600 font-medium">Inventory Manager</div>
+          </div>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Body Wrapper -->
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- Responsive Left Sidebar Navigation (Page 2 of PDF) -->
+    <aside id="sidebar" class="fixed inset-y-0 left-0 top-16 z-40 w-64 bg-white border-r border-slate-200 flex flex-col justify-between transform -translate-x-full transition-transform duration-200 ease-in-out lg:translate-x-0 lg:static lg:z-auto">
+      <div class="p-4 space-y-6 overflow-y-auto">
+
+        <!-- Navigation Group -->
+        <div>
+          <p class="px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Core Navigation</p>
+          <nav class="space-y-1">
+            <!-- Dashboard -->
+            <button onclick="navigateTo('dashboard')" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="dashboard">
+              <i data-lucide="layout-dashboard" class="w-5 h-5 text-indigo-600"></i>
+              <span>Dashboard</span>
+            </button>
+            
+            <!-- Products -->
+            <button onclick="navigateTo('products')" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="products">
+              <i data-lucide="package" class="w-5 h-5 text-blue-600"></i>
+              <span>Products</span>
+              <span id="productCountBadge" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-semibold">5</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- Operations Group (PDF Page 2) -->
+        <div>
+          <p class="px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Operations</p>
+          <nav class="space-y-1">
+            <!-- Receipts -->
+            <button onclick="navigateTo('receipts')" class="nav-btn w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="receipts">
+              <i data-lucide="arrow-down-left" class="w-4 h-4 text-emerald-600"></i>
+              <span>1. Receipts</span>
+            </button>
+
+            <!-- Delivery Orders -->
+            <button onclick="navigateTo('deliveries')" class="nav-btn w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="deliveries">
+              <i data-lucide="arrow-up-right" class="w-4 h-4 text-blue-600"></i>
+              <span>2. Delivery Orders</span>
+            </button>
+
+            <!-- Internal Transfers -->
+            <button onclick="navigateTo('transfers')" class="nav-btn w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="transfers">
+              <i data-lucide="repeat" class="w-4 h-4 text-amber-600"></i>
+              <span>3. Internal Transfers</span>
+            </button>
+
+            <!-- Stock Adjustments -->
+            <button onclick="navigateTo('adjustments')" class="nav-btn w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="adjustments">
+              <i data-lucide="sliders" class="w-4 h-4 text-purple-600"></i>
+              <span>4. Stock Adjustments</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- Move History / Audit Ledger -->
+        <div>
+          <p class="px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Audit & Settings</p>
+          <nav class="space-y-1">
+            <button onclick="navigateTo('ledger')" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="ledger">
+              <i data-lucide="history" class="w-5 h-5 text-slate-500"></i>
+              <span>Move History</span>
+            </button>
+
+            <button onclick="navigateTo('settings')" class="nav-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition" data-nav="settings">
+              <i data-lucide="warehouse" class="w-5 h-5 text-slate-500"></i>
+              <span>Warehouse Settings</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- 4-Step Interactive PDF Flow Walkthrough -->
+        <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-2xl p-3.5">
+          <div class="flex items-center gap-2 mb-2">
+            <i data-lucide="play-circle" class="w-4 h-4 text-indigo-600"></i>
+            <span class="text-xs font-bold text-indigo-950">PDF Flow Test</span>
+          </div>
+          <p class="text-[11px] text-slate-600 mb-2.5 leading-relaxed">
+            Run the 4-step example from PDF: Receipt → Internal Transfer → Delivery → Damage Adjustment.
+          </p>
+          <button onclick="runPdfDemoWorkflow()" id="demoWorkflowBtn" class="w-full py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center justify-center gap-1.5 transition">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Run 4-Step Flow
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Profile Menu (Left Sidebar - Page 2) -->
+      <div class="p-4 border-t border-slate-200 bg-slate-50/50">
+        <div class="space-y-1">
+          <button onclick="openModal('profileModal')" class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition">
+            <i data-lucide="user" class="w-4 h-4 text-slate-500"></i>
+            <span>My Profile</span>
+          </button>
+          <button onclick="openModal('loginModal')" class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition">
+            <i data-lucide="key" class="w-4 h-4 text-slate-500"></i>
+            <span>Switch / Login</span>
+          </button>
+          <button onclick="handleLogout()" class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-rose-600 hover:bg-rose-50 transition">
+            <i data-lucide="log-out" class="w-4 h-4 text-rose-600"></i>
+            <span>Logout</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+      <!-- Toast Notification Container -->
+      <div id="toastContainer" class="fixed top-20 right-6 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"></div>
+
+      <!-- ========================================== -->
+      <!-- VIEW: DASHBOARD (Page 1 of PDF)            -->
+      <!-- ========================================== -->
+      <section id="view-dashboard" class="space-y-6">
+        <!-- Dashboard Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Inventory Dashboard</h1>
+            <p class="text-sm text-slate-500 mt-1">Real-time overview of warehouse stock, pending orders, and scheduled transfers.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="loadDashboardData()" class="p-2 bg-white border border-slate-200 text-slate-600 rounded-xl hover:bg-slate-50 shadow-xs transition" title="Refresh">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>
+            <button onclick="openModal('productModal')" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-xs flex items-center gap-2 transition">
+              <i data-lucide="plus" class="w-4 h-4"></i> Add Product
+            </button>
+          </div>
+        </div>
+
+        <!-- 5 Dashboard KPIs (PDF Page 1) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <!-- Total Products in Stock -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md transition">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Products</span>
+              <div class="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <i data-lucide="package" class="w-5 h-5"></i>
+              </div>
+            </div>
+            <div class="flex items-baseline justify-between">
+              <span id="kpiTotalProducts" class="text-3xl font-black text-slate-900">0</span>
+              <span id="kpiStockUnits" class="text-xs font-medium text-slate-500">0 units total</span>
+            </div>
+          </div>
+
+          <!-- Low Stock / Out of Stock Items -->
+          <div class="bg-white p-5 rounded-2xl border border-rose-200 shadow-xs flex flex-col justify-between hover:shadow-md transition bg-gradient-to-b from-white to-rose-50/20">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold text-rose-600 uppercase tracking-wide">Low Stock Alert</span>
+              <div class="w-9 h-9 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center">
+                <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+              </div>
+            </div>
+            <div class="flex items-baseline justify-between">
+              <span id="kpiLowStock" class="text-3xl font-black text-rose-600">0</span>
+              <span class="text-xs font-semibold text-rose-500">Reorder needed</span>
+            </div>
+          </div>
+
+          <!-- Pending Receipts -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md transition">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Pending Receipts</span>
+              <div class="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <i data-lucide="arrow-down-left" class="w-5 h-5"></i>
+              </div>
+            </div>
+            <div class="flex items-baseline justify-between">
+              <span id="kpiPendingReceipts" class="text-3xl font-black text-slate-900">0</span>
+              <span class="text-xs text-emerald-600 font-medium">Inbound Goods</span>
+            </div>
+          </div>
+
+          <!-- Pending Deliveries -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md transition">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Pending Deliveries</span>
+              <div class="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                <i data-lucide="truck" class="w-5 h-5"></i>
+              </div>
+            </div>
+            <div class="flex items-baseline justify-between">
+              <span id="kpiPendingDeliveries" class="text-3xl font-black text-slate-900">0</span>
+              <span class="text-xs text-indigo-600 font-medium">Customer Shipments</span>
+            </div>
+          </div>
+
+          <!-- Internal Transfers Scheduled -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between hover:shadow-md transition">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Scheduled Transfers</span>
+              <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                <i data-lucide="repeat" class="w-5 h-5"></i>
+              </div>
+            </div>
+            <div class="flex items-baseline justify-between">
+              <span id="kpiScheduledTransfers" class="text-3xl font-black text-slate-900">0</span>
+              <span class="text-xs text-amber-600 font-medium">Internal Movements</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dynamic Filters Bar (PDF Page 1) -->
+        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div class="flex items-center gap-2">
+              <i data-lucide="filter" class="w-4 h-4 text-indigo-600"></i>
+              <span class="text-sm font-bold text-slate-800">Dynamic Document Filters</span>
+            </div>
+            <button onclick="resetFilters()" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+              Reset Filters
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <!-- Filter by Document Type -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">Document Type</label>
+              <select id="filterDocType" onchange="applyFilters()" class="w-full text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none">
+                <option value="all">All Document Types</option>
+                <option value="receipt">Receipts (Incoming)</option>
+                <option value="delivery">Delivery Orders (Outgoing)</option>
+                <option value="transfer">Internal Transfers</option>
+                <option value="adjustment">Stock Adjustments</option>
+              </select>
+            </div>
+
+            <!-- Filter by Status -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">Status</label>
+              <select id="filterStatus" onchange="applyFilters()" class="w-full text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none">
+                <option value="all">All Statuses</option>
+                <option value="draft">Draft</option>
+                <option value="waiting">Waiting</option>
+                <option value="ready">Ready</option>
+                <option value="done">Done (Validated)</option>
+                <option value="canceled">Canceled</option>
+              </select>
+            </div>
+
+            <!-- Filter by Warehouse / Location -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">Warehouse / Location</label>
+              <select id="filterLocation" onchange="applyFilters()" class="w-full text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none">
+                <option value="">All Locations</option>
+              </select>
+            </div>
+
+            <!-- Filter by Product Category -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 mb-1.5">Product Category</label>
+              <select id="filterCategory" onchange="applyFilters()" class="w-full text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-500 outline-none">
+                <option value="all">All Categories</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Operations Data Table -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 class="text-base font-bold text-slate-900">Inventory Operations</h2>
+              <p class="text-xs text-slate-500">Live operational documents synchronized with PostgreSQL.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="filteredDocCount" class="text-xs font-semibold text-slate-500">Showing 0 documents</span>
+            </div>
+          </div>
+
+          <!-- Responsive Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+              <thead class="bg-slate-50/80 text-xs uppercase font-bold text-slate-400 border-b border-slate-200">
+                <tr>
+                  <th class="px-5 py-3.5">Reference</th>
+                  <th class="px-4 py-3.5">Type</th>
+                  <th class="px-4 py-3.5">Partner / Destination</th>
+                  <th class="px-4 py-3.5">Items</th>
+                  <th class="px-4 py-3.5">Status</th>
+                  <th class="px-4 py-3.5">Date</th>
+                  <th class="px-5 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="operationsTableBody" class="divide-y divide-slate-100">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Visual Analytics Chart & Low Stock Cards -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Stock Distribution Chart -->
+          <div class="lg:col-span-2 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-sm font-bold text-slate-900">Stock Availability by Location</h3>
+                <p class="text-xs text-slate-400">Total units stored across active warehouses</p>
+              </div>
+              <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">Real-time</span>
+            </div>
+            <div class="h-64">
+              <canvas id="stockBarChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Low Stock Quick Alerts List -->
+          <div class="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                  <i data-lucide="bell" class="w-4 h-4 text-rose-500"></i> Low Stock Alerts
+                </h3>
+                <span class="text-xs text-rose-600 font-semibold" id="lowStockCountText">0 items</span>
+              </div>
+              <p class="text-xs text-slate-400 mb-3">Products that fell below minimum reorder point.</p>
+              <div id="lowStockAlertsList" class="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+            <button onclick="navigateTo('products'); setTimeout(() => switchProductTab('reorder'), 100)" class="w-full mt-4 py-2 px-3 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 transition text-center">
+              View Reordering Rules
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================== -->
+      <!-- VIEW: PRODUCTS (Page 2 of PDF)             -->
+      <!-- ========================================== -->
+      <section id="view-products" class="hidden space-y-6">
+        <!-- Products Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Product Catalog & Stock</h1>
+            <p class="text-sm text-slate-500 mt-1">Manage SKUs, categories, unit of measures, reorder thresholds, and location availability.</p>
+          </div>
+          <button onclick="openModal('productModal')" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-xs flex items-center gap-2 transition self-start sm:self-auto">
+            <i data-lucide="plus" class="w-4 h-4"></i> Create Product
+          </button>
+        </div>
+
+        <!-- Product Sub-tabs (PDF Page 2) -->
+        <div class="flex border-b border-slate-200 gap-4 sm:gap-6 text-sm font-semibold">
+          <button onclick="switchProductTab('catalog')" id="prodTab-catalog" class="pb-3 border-b-2 border-indigo-600 text-indigo-600 transition">
+            1. Product Catalog
+          </button>
+          <button onclick="switchProductTab('availability')" id="prodTab-availability" class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition">
+            2. Stock Availability Per Location
+          </button>
+          <button onclick="switchProductTab('reorder')" id="prodTab-reorder" class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition">
+            3. Reordering Rules
+          </button>
+        </div>
+
+        <!-- Sub-tab 1: Product Catalog Table -->
+        <div id="subview-catalog" class="space-y-4">
+          <div class="flex flex-col sm:flex-row gap-3 justify-between items-center bg-white p-3.5 rounded-2xl border border-slate-200">
+            <div class="flex items-center gap-2 w-full sm:w-80">
+              <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
+              <input type="text" id="catalogSearchInput" placeholder="Filter by product name or SKU..." oninput="filterProductCatalog()" class="w-full text-xs sm:text-sm bg-transparent outline-none">
+            </div>
+            <div class="flex items-center gap-3 w-full sm:w-auto">
+              <select id="catalogCategorySelect" onchange="filterProductCatalog()" class="text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 outline-none">
+                <option value="all">All Categories</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-slate-50 text-xs uppercase font-bold text-slate-400 border-b border-slate-200">
+                  <tr>
+                    <th class="px-5 py-3.5">SKU / Code</th>
+                    <th class="px-4 py-3.5">Product Name</th>
+                    <th class="px-4 py-3.5">Category</th>
+                    <th class="px-4 py-3.5">Unit (UoM)</th>
+                    <th class="px-4 py-3.5">Reorder Point</th>
+                    <th class="px-4 py-3.5">Total On Hand</th>
+                    <th class="px-5 py-3.5 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="productCatalogTableBody" class="divide-y divide-slate-100">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-tab 2: Stock Availability Per Location Matrix (PDF Page 2) -->
+        <div id="subview-availability" class="hidden space-y-4">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Multi-Location Stock Matrix</h3>
+                <p class="text-xs text-slate-500">Live breakdown of quantity on hand across each warehouse and storage rack.</p>
+              </div>
+              <button onclick="loadStockMatrix()" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Refresh Matrix
+              </button>
+            </div>
+            <div class="overflow-x-auto">
+              <table id="stockMatrixTable" class="w-full text-left text-sm text-slate-700">
+                <!-- Dynamic Header and Rows -->
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-tab 3: Reordering Rules (PDF Page 2) -->
+        <div id="subview-reorder" class="hidden space-y-4">
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Automated Reordering Rules</h3>
+                <p class="text-xs text-slate-500">Alert triggers when total on-hand stock is at or below the reorder point.</p>
+              </div>
+              <span class="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">Auto Safety Stock</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm text-slate-600">
+                <thead class="bg-slate-50 text-xs uppercase font-bold text-slate-400 border-b border-slate-200">
+                  <tr>
+                    <th class="px-5 py-3.5">Product</th>
+                    <th class="px-4 py-3.5">SKU</th>
+                    <th class="px-4 py-3.5">Current Stock</th>
+                    <th class="px-4 py-3.5">Reorder Threshold</th>
+                    <th class="px-4 py-3.5">Suggested Replenish</th>
+                    <th class="px-4 py-3.5">Status</th>
+                    <th class="px-5 py-3.5 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="reorderRulesTableBody" class="divide-y divide-slate-100">
+                  <!-- Dynamically populated -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================== -->
+      <!-- VIEW: OPERATIONS (Receipts, Deliveries, etc)-->
+      <!-- ========================================== -->
+      <section id="view-operations-single" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 id="operationsViewTitle" class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Receipts</h1>
+            <p id="operationsViewSubtitle" class="text-sm text-slate-500 mt-1">Manage stock arrival from suppliers.</p>
+          </div>
+          <button id="operationsViewAddBtn" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-xs flex items-center gap-2 transition">
+            <i data-lucide="plus" class="w-4 h-4"></i> Create Operation
+          </button>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+              <thead class="bg-slate-50 text-xs uppercase font-bold text-slate-400 border-b border-slate-200">
+                <tr>
+                  <th class="px-5 py-3.5">Reference</th>
+                  <th class="px-4 py-3.5">Partner / Target</th>
+                  <th class="px-4 py-3.5">Items</th>
+                  <th class="px-4 py-3.5">Status</th>
+                  <th class="px-4 py-3.5">Date</th>
+                  <th class="px-5 py-3.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="singleOperationsTableBody" class="divide-y divide-slate-100">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================== -->
+      <!-- VIEW: MOVE HISTORY / STOCK LEDGER (PDF P.3)-->
+      <!-- ========================================== -->
+      <section id="view-ledger" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Move History (Stock Ledger)</h1>
+            <p class="text-sm text-slate-500 mt-1">Append-only audit trail logging every stock arrival, transfer, dispatch, and adjustment.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="loadLedgerData()" class="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 transition">
+              <i data-lucide="refresh-cw" class="w-4 h-4"></i> Refresh Ledger
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div class="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-3 items-center justify-between">
+            <div class="flex items-center gap-2 w-full sm:w-80">
+              <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
+              <input type="text" id="ledgerSearchInput" placeholder="Filter ledger by reference or notes..." oninput="filterLedgerTable()" class="w-full text-xs sm:text-sm bg-transparent outline-none">
+            </div>
+            <span class="text-xs text-slate-500 font-semibold" id="ledgerCountBadge">0 movements recorded</span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600">
+              <thead class="bg-slate-50 text-xs uppercase font-bold text-slate-400 border-b border-slate-200">
+                <tr>
+                  <th class="px-5 py-3.5">Date & Time</th>
+                  <th class="px-4 py-3.5">Reference</th>
+                  <th class="px-4 py-3.5">Product</th>
+                  <th class="px-4 py-3.5">Location</th>
+                  <th class="px-4 py-3.5">Qty Change</th>
+                  <th class="px-4 py-3.5">Balance After</th>
+                  <th class="px-5 py-3.5">Note</th>
+                </tr>
+              </thead>
+              <tbody id="ledgerTableBody" class="divide-y divide-slate-100">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================================== -->
+      <!-- VIEW: SETTINGS (Warehouses & Locations)    -->
+      <!-- ========================================== -->
+      <section id="view-settings" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Warehouse & Location Settings</h1>
+            <p class="text-sm text-slate-500 mt-1">Multi-warehouse support for physical storage yards, production racks, and stores.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="openModal('warehouseModal')" class="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 flex items-center gap-1.5 transition">
+              <i data-lucide="plus" class="w-4 h-4"></i> Add Warehouse
+            </button>
+            <button onclick="openModal('locationModal')" class="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-xs flex items-center gap-1.5 transition">
+              <i data-lucide="map-pin" class="w-4 h-4"></i> Add Location
+            </button>
+          </div>
+        </div>
+
+        <div id="warehousesContainer" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Dynamically populated warehouse cards with their locations -->
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ======================================================= -->
+  <!-- MODALS (Dialogs for Operations, Auth, and Profiles)     -->
+  <!-- ======================================================= -->
+
+  <!-- MODAL 1: NEW RECEIPT (PDF Page 2) -->
+  <div id="receiptModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+            <i data-lucide="arrow-down-left" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">1. Create New Receipt</h3>
+            <p class="text-xs text-slate-500">Incoming goods from vendor</p>
+          </div>
+        </div>
+        <button onclick="closeModal('receiptModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="receiptForm" onsubmit="handleCreateReceipt(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Supplier / Vendor Name *</label>
+          <input type="text" id="recSupplierName" required placeholder="e.g. Tata Steel Ltd, Acme Supplies" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Destination Location *</label>
+          <select id="recDestLocation" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div class="border-t border-slate-100 pt-3">
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Select Product *</label>
+          <select id="recProduct" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Quantity Received *</label>
+          <input type="number" step="0.01" min="0.01" id="recQuantity" required placeholder="e.g. 50" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Notes (Optional)</label>
+          <input type="text" id="recNotes" placeholder="e.g. Inbound purchase order #PO-991" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div class="flex items-center gap-2 p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+          <input type="checkbox" id="recValidateImmediately" checked class="w-4 h-4 text-emerald-600 rounded">
+          <label for="recValidateImmediately" class="text-xs font-semibold text-emerald-900">
+            Validate immediately (Auto-increase stock by +quantity)
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('receiptModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs">Create & Process</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 2: NEW DELIVERY ORDER (PDF Page 3) -->
+  <div id="deliveryModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+            <i data-lucide="arrow-up-right" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">2. Create Delivery Order</h3>
+            <p class="text-xs text-slate-500">Outgoing shipment to customer</p>
+          </div>
+        </div>
+        <button onclick="closeModal('deliveryModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="deliveryForm" onsubmit="handleCreateDelivery(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Customer / Client Name *</label>
+          <input type="text" id="delCustomerName" required placeholder="e.g. Apex Corp, Modern Interior Studio" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Source Location (Pick from) *</label>
+          <select id="delSourceLocation" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div class="border-t border-slate-100 pt-3">
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Select Product *</label>
+          <select id="delProduct" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Quantity to Deliver *</label>
+          <input type="number" step="0.01" min="0.01" id="delQuantity" required placeholder="e.g. 10" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Notes (Optional)</label>
+          <input type="text" id="delNotes" placeholder="e.g. Priority delivery / Sales order #SO-102" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div class="flex items-center gap-2 p-3 bg-blue-50 rounded-xl border border-blue-100">
+          <input type="checkbox" id="delValidateImmediately" checked class="w-4 h-4 text-blue-600 rounded">
+          <label for="delValidateImmediately" class="text-xs font-semibold text-blue-900">
+            Validate & Dispatch (Stock decreases automatically)
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('deliveryModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs">Process Delivery</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 3: INTERNAL TRANSFER (PDF Page 3) -->
+  <div id="transferModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+            <i data-lucide="repeat" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">3. Internal Stock Transfer</h3>
+            <p class="text-xs text-slate-500">Move stock inside company (e.g. Main Store → Production Rack)</p>
+          </div>
+        </div>
+        <button onclick="closeModal('transferModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="transferForm" onsubmit="handleCreateTransfer(event)" class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Source Location *</label>
+            <select id="traSourceLocation" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+              <!-- Populated via JS -->
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Destination Location *</label>
+            <select id="traDestLocation" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+              <!-- Populated via JS -->
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Select Product *</label>
+          <select id="traProduct" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Quantity to Move *</label>
+          <input type="number" step="0.01" min="0.01" id="traQuantity" required placeholder="e.g. 25" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Movement Reason / Note</label>
+          <input type="text" id="traNotes" placeholder="e.g. Move to production rack for assembly" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div class="flex items-center gap-2 p-3 bg-amber-50 rounded-xl border border-amber-100">
+          <input type="checkbox" id="traValidateImmediately" checked class="w-4 h-4 text-amber-600 rounded">
+          <label for="traValidateImmediately" class="text-xs font-semibold text-amber-900">
+            Validate transfer immediately (Updates both locations in ledger)
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('transferModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-xs">Execute Transfer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 4: STOCK ADJUSTMENT (PDF Page 3) -->
+  <div id="adjustmentModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
+            <i data-lucide="sliders" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">4. Inventory Adjustment</h3>
+            <p class="text-xs text-slate-500">Fix mismatch between recorded stock & physical count</p>
+          </div>
+        </div>
+        <button onclick="closeModal('adjustmentModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="adjustmentForm" onsubmit="handleCreateAdjustment(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Product *</label>
+          <select id="adjProduct" onchange="updateRecordedStockDisplay()" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Location *</label>
+          <select id="adjLocation" onchange="updateRecordedStockDisplay()" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <!-- Current Recorded vs Physical Count Display -->
+        <div class="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+          <div>
+            <span class="block text-[11px] font-semibold text-slate-400 uppercase">Recorded Stock</span>
+            <span id="adjRecordedQty" class="text-lg font-bold text-slate-800">--</span>
+          </div>
+          <div>
+            <span class="block text-[11px] font-semibold text-slate-400 uppercase">Calculated Delta</span>
+            <span id="adjDeltaDisplay" class="text-lg font-bold text-slate-500">0.00</span>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Physical Counted Quantity *</label>
+          <input type="number" step="0.01" min="0" id="adjCountedQty" oninput="calculateAdjustmentDelta()" required placeholder="Enter real counted quantity" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white font-bold text-slate-900">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Reason for Adjustment</label>
+          <input type="text" id="adjNotes" placeholder="e.g. 3 kg steel damaged or physical audit difference" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('adjustmentModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-xs">Apply Adjustment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 5: CREATE PRODUCT (PDF Page 2) -->
+  <div id="productModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center">
+            <i data-lucide="package-plus" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">Create New Product</h3>
+            <p class="text-xs text-slate-500">Name, SKU/Code, Category, UoM & Reorder rule</p>
+          </div>
+        </div>
+        <button onclick="closeModal('productModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="productForm" onsubmit="handleCreateProduct(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Product Name *</label>
+          <input type="text" id="newProdName" required placeholder="e.g. Ergonomic Office Desk" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">SKU / Code *</label>
+            <input type="text" id="newProdSku" required placeholder="e.g. FURN-DK-02" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Category</label>
+            <input type="text" id="newProdCategory" placeholder="e.g. Furniture, Raw Materials" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Unit of Measure (UoM)</label>
+            <select id="newProdUom" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+              <option value="Units">Units</option>
+              <option value="kg">kg (Kilograms)</option>
+              <option value="m">m (Meters)</option>
+              <option value="L">L (Liters)</option>
+              <option value="Pcs">Pcs (Pieces)</option>
+              <option value="Boxes">Boxes</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Reordering Point (Alert)</label>
+            <input type="number" step="0.01" min="0" id="newProdReorderPoint" value="10" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+          </div>
+        </div>
+
+        <div class="border-t border-slate-100 pt-3">
+          <span class="block text-xs font-bold text-slate-800 mb-2">Initial Stock (Optional)</span>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">Opening Quantity</label>
+              <input type="number" step="0.01" min="0" id="newProdInitialStock" placeholder="0" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-500 mb-1">Initial Location</label>
+              <select id="newProdInitialLocation" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500 focus:bg-white">
+                <!-- Populated via JS -->
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('productModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs">Save Product</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 6: WAREHOUSE & LOCATION MODALS -->
+  <div id="warehouseModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <h3 class="text-base font-bold text-slate-900">Add New Warehouse</h3>
+        <button onclick="closeModal('warehouseModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="warehouseForm" onsubmit="handleCreateWarehouse(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Warehouse Name *</label>
+          <input type="text" id="whName" required placeholder="e.g. Central Warehouse" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Code</label>
+          <input type="text" id="whCode" placeholder="e.g. WH-CENTRAL" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Address / Location Description</label>
+          <input type="text" id="whAddress" placeholder="e.g. Sector 18 Logistics Park" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('warehouseModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold">Save Warehouse</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="locationModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <h3 class="text-base font-bold text-slate-900">Add New Storage Location</h3>
+        <button onclick="closeModal('locationModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <form id="locationForm" onsubmit="handleCreateLocation(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Parent Warehouse *</label>
+          <select id="locParentWh" required class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Location Name *</label>
+          <input type="text" id="locName" required placeholder="e.g. Rack C, Assembly Bay, Bulk Shelf" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Location Type</label>
+          <select id="locType" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+            <option value="internal">Internal Location</option>
+            <option value="production">Production Area</option>
+            <option value="vendor">Vendor Location</option>
+            <option value="customer">Customer Location</option>
+          </select>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" onclick="closeModal('locationModal')" class="px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600">Cancel</button>
+          <button type="submit" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold">Save Location</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 7: AUTHENTICATION & OTP PASSWORD RESET (PDF Page 1) -->
+  <div id="loginModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 sm:p-8 space-y-6">
+      
+      <!-- Logo Header in Modal -->
+      <div class="text-center space-y-2">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-800 to-indigo-600 flex items-center justify-center text-white mx-auto shadow-lg shadow-indigo-200">
+          <i data-lucide="boxes" class="w-7 h-7"></i>
+        </div>
+        <h2 id="authModalTitle" class="text-2xl font-black text-slate-900 tracking-tight">StockSense Sign In</h2>
+        <p id="authModalSubtitle" class="text-xs text-slate-500">Modular Inventory Management System</p>
+      </div>
+
+      <!-- Quick Role Pickers for Instant Testing -->
+      <div class="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl">
+        <button type="button" onclick="setQuickRole('manager')" id="btnQuickManager" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-bold bg-white text-indigo-700 shadow-xs transition">
+          Manager Demo
+        </button>
+        <button type="button" onclick="setQuickRole('staff')" id="btnQuickStaff" class="flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 transition">
+          Staff Demo
+        </button>
+      </div>
+
+      <!-- Sign In Form -->
+      <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">Email Address</label>
+          <input type="email" id="loginEmail" required value="manager@stocksense.com" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs font-semibold text-slate-700">Password</label>
+            <button type="button" onclick="switchAuthView('otp')" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
+              Forgot? Reset with OTP
+            </button>
+          </div>
+          <input type="password" id="loginPassword" required value="admin123" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 outline-none focus:border-indigo-500 focus:bg-white">
+        </div>
+
+        <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-md shadow-indigo-200 transition">
+          Sign In to Dashboard
+        </button>
+      </form>
+
+      <!-- OTP-Based Password Reset View (PDF Page 1) -->
+      <div id="otpResetView" class="hidden space-y-4 border-t border-slate-100 pt-4">
+        <div class="bg-indigo-50 p-3 rounded-xl border border-indigo-100 text-xs text-indigo-900">
+          <p class="font-bold mb-1">OTP Password Reset</p>
+          <p>We'll generate a secure 6-digit TOTP stored in Postgres/Cache with 5-minute expiry.</p>
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Your Registered Email</label>
+            <div class="flex gap-2">
+              <input type="email" id="otpEmail" placeholder="e.g. manager@stocksense.com" class="flex-1 text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+              <button type="button" onclick="handleGenerateOtp()" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl whitespace-nowrap">
+                Get OTP
+              </button>
+            </div>
+          </div>
+
+          <div id="otpStep2" class="hidden space-y-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Enter 6-Digit OTP Code</label>
+              <input type="text" id="otpCode" maxlength="6" placeholder="123456" class="w-full text-center tracking-widest font-black text-lg bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none focus:border-indigo-500">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">New Password</label>
+              <input type="password" id="otpNewPassword" placeholder="Enter your new password" class="w-full text-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 outline-none">
+            </div>
+
+            <button type="button" onclick="handleResetPassword()" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs">
+              Verify OTP & Set Password
+            </button>
+          </div>
+        </div>
+
+        <button type="button" onclick="switchAuthView('login')" class="w-full text-center text-xs text-slate-500 hover:text-slate-800 font-semibold pt-1">
+          Back to Login
+        </button>
+      </div>
+
+      <!-- Close Button -->
+      <div class="text-center pt-2">
+        <button type="button" onclick="closeModal('loginModal')" class="text-xs text-slate-400 hover:text-slate-600">Close window</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 8: USER PROFILE MODAL (PDF Page 2) -->
+  <div id="profileModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs hidden">
+    <div class="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 space-y-5">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <h3 class="text-base font-bold text-slate-900">User Profile</h3>
+        <button onclick="closeModal('profileModal')" class="text-slate-400 hover:text-slate-600 p-1">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+        <div class="w-14 h-14 rounded-2xl bg-indigo-600 text-white font-black text-xl flex items-center justify-center shadow-md shadow-indigo-200" id="profileBigAvatar">
+          KS
+        </div>
+        <div>
+          <h4 id="profileName" class="text-base font-bold text-slate-900">Khushi Saharan</h4>
+          <p id="profileEmail" class="text-xs text-slate-500">manager@stocksense.com</p>
+          <span id="profileRoleBadge" class="inline-block mt-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">Inventory Manager</span>
+        </div>
+      </div>
+
+      <div class="space-y-2 text-xs text-slate-600">
+        <div class="flex justify-between py-1.5 border-b border-slate-100">
+          <span class="text-slate-400">Target Role:</span>
+          <span class="font-semibold text-slate-800" id="profileRoleDesc">Full inventory authority (PDF Manager)</span>
+        </div>
+        <div class="flex justify-between py-1.5 border-b border-slate-100">
+          <span class="text-slate-400">Database Engine:</span>
+          <span class="font-semibold text-emerald-700">PostgreSQL 18</span>
+        </div>
+        <div class="flex justify-between py-1.5">
+          <span class="text-slate-400">Real-time Bus:</span>
+          <span class="font-semibold text-slate-800">WebSocket + Async Pub/Sub</span>
+        </div>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="openModal('loginModal'); closeModal('profileModal')" class="flex-1 py-2 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50">
+          Switch User
+        </button>
+        <button onclick="handleLogout(); closeModal('profileModal')" class="flex-1 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-xs">
+          Logout
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load Application Logic -->
+  <script src="/static/app.js"></script>
+</body>
+</html>
