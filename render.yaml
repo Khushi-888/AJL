@@ -2,6 +2,9 @@ databases:
   - name: stocksense-db
     plan: free
     region: ohio
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: "Allow everywhere"
 
 services:
   - type: redis
@@ -9,6 +12,9 @@ services:
     plan: free
     region: ohio
     maxmemoryPolicy: noeviction
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: "Allow everywhere"
 
   - type: web
     name: stocksense-web
