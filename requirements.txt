@@ -5,6 +5,7 @@ flet==0.21.2
 fastapi==0.110.0
 uvicorn[standard]==0.29.0
 gunicorn==21.2.0
+python-multipart>=0.0.9
 
 # API Validation
 pydantic==2.6.4
