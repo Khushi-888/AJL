@@ -5,6 +5,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Use SQLite for local dev if Postgres isn't set up yet, but production will be Postgres 16
 # Default PostgreSQL 18 connection url
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/stocksense")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 
